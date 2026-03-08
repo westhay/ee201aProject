@@ -102,6 +102,143 @@ def get_effective_conductivity(material_string, conductivity_values):
     
     return k_eff
 
+def parse_stackup(stackup_string):
+    """
+
+    """
+    if not stackup_string or stackup_string == "":
+        return []
+    
+    result = []
+    current_pos = 0
+    
+    while current_pos < len(stackup_string):
+        # Find the next colon (separates count from material)
+        colon_pos = stackup_string.find(":", current_pos)
+        
+        if colon_pos == -1:
+            # No more colons, malformed
+            break
+        
+        # Extract count (everything from current_pos to colon)
+        count_str = stackup_string[current_pos:colon_pos].strip()
+        
+        try:
+            count = int(count_str)
+        except ValueError:
+            print(f"Warning: Could not parse count: '{count_str}'")
+            break
+        
+        # Now find where this material definition ends
+        # It ends at the next "count:" pattern (digit(s) followed by colon)
+        # OR at the end of the string
+        
+        material_start = colon_pos + 1
+        material_end = len(stackup_string)
+        
+        # Look for the next "count:" pattern
+        for i in range(material_start, len(stackup_string)):
+            if stackup_string[i] == ',':
+                # Check if what follows is a count (digits followed by colon)
+                remaining = stackup_string[i+1:].lstrip()
+                
+                # Try to parse as count:
+                colon_in_remaining = remaining.find(":")
+                if colon_in_remaining > 0:
+                    potential_count = remaining[:colon_in_remaining].strip()
+                    
+                    # Check if it's all digits (a valid count)
+                    if potential_count.isdigit():
+                        # Found the next count, so material ends at this comma
+                        material_end = i
+                        break
+        
+        # Extract material definition
+        material_def = stackup_string[material_start:material_end].strip()
+        
+        if material_def:
+            result.append((count, material_def))
+        
+        # Move to next position
+        current_pos = material_end
+        if current_pos < len(stackup_string) and stackup_string[current_pos] == ',':
+            current_pos += 1  # Skip the comma
+    
+    return result
+    
+def calculate_single_layer_resistances_special(box, conductivity_values):
+    """
+    Special handler for TIM and bonding boxes.
+    
+    NOW HANDLES MATERIALS WITH COMMAS IN THEIR NAMES!
+    
+    Args:
+        box: Box object
+        conductivity_values: Dict of k values
+    
+    Returns:
+        (R_x, R_y, R_z): tuple [K/W]
+    """
+    
+    if not box.stackup or box.stackup == "":
+        return (0.0, 0.0, 0.0)
+    
+    # Parse stackup carefully
+    layer_specs = parse_stackup(box.stackup)
+    
+    if not layer_specs:
+        return (0.0, 0.0, 0.0)
+    
+    R_x_list = []
+    R_y_list = []
+    R_z_list = []
+    
+    for count, material_def in layer_specs:
+        # material_def might be:
+        # - "TIM0p5" (simple)
+        # - "EpAg:75,Epoxy, Silver filled:25" (composite with comma in name)
+        # - "Cu-Foil:0.5,Si:0.5" (composite without comma in names)
+        
+        # Get effective conductivity (handles composites)
+        k_eff = get_effective_conductivity(material_def, conductivity_values)
+        
+        if k_eff <= 0:
+            continue
+        
+        # Calculate resistances
+        height_m = box.height / 1000
+        width_m = box.width / 1000
+        length_m = box.length / 1000
+        
+        area_xy = width_m * length_m
+        area_yz = length_m * height_m
+        area_xz = width_m * height_m
+        
+        if area_yz > 0:
+            R_x = width_m / (k_eff * area_yz)
+        else:
+            R_x = 0.0
+        
+        if area_xz > 0:
+            R_y = length_m / (k_eff * area_xz)
+        else:
+            R_y = 0.0
+        
+        if area_xy > 0:
+            R_z = height_m / (k_eff * area_xy)
+        else:
+            R_z = 0.0
+        
+        for _ in range(count):
+            R_x_list.append(R_x)
+            R_y_list.append(R_y)
+            R_z_list.append(R_z)
+    
+    R_x_total = combine_parallel_resistances(R_x_list)
+    R_y_total = combine_parallel_resistances(R_y_list)
+    R_z_total = combine_series_resistances(R_z_list)
+    
+    return (R_x_total, R_y_total, R_z_total)
 
 def calculate_single_layer_resistances(layer_obj, box, conductivity_values):
     """
@@ -215,49 +352,56 @@ def calculate_box_resistances(box, layers, conductivity_values):
     Returns:
         (R_x_total, R_y_total, R_z_total): tuple [K/W]
     """
+is_tim_box = "_TIM" in box.name
+is_bonding_box = "_bonding" in box.name
     
-    if not box.stackup or box.stackup == "":
-        return (0.0, 0.0, 0.0)
-    
-    # Parse stackup: "1:layer1,2:layer2"
-    layer_specs = box.stackup.split(",")
-    
-    R_x_list = []  # For parallel combination
-    R_y_list = []  # For parallel combination
-    R_z_list = []  # For series combination
-    
-    for layer_spec in layer_specs:
-        layer_spec = layer_spec.strip()
-        parts = layer_spec.split(":")
+    if is_tim_box or is_bonding_box:
+        # ---- Case 1: TIM or Bonding Box ----
+        # Use special handler that works with direct material names
+        return calculate_single_layer_resistances_special(box, conductivity_values)    
+    else:
+        if not box.stackup or box.stackup == "":
+            return (0.0, 0.0, 0.0)
         
-        if len(parts) != 2:
-            print(f"Warning: Invalid layer spec: {layer_spec}")
-            continue
+        # Parse stackup: "1:layer1,2:layer2"
+        layer_specs = box.stackup.split(",")
         
-        count_str, layer_name = parts
+        R_x_list = []  # For parallel combination
+        R_y_list = []  # For parallel combination
+        R_z_list = []  # For series combination
         
-        try:
-            count = int(count_str.strip())
-        except ValueError:
-            print(f"Warning: Could not parse count: {count_str}")
-            continue
-        
-        # Find layer object
-        layer_obj = find_layer_by_name(layers, layer_name.strip())
-        if layer_obj is None:
-            print(f"Warning: Layer '{layer_name}' not found")
-            continue
-        
-        # Calculate R_x, R_y, R_z for this layer
-        R_x_layer, R_y_layer, R_z_layer = calculate_single_layer_resistances(
-            layer_obj, box, conductivity_values
-        )
-        
-        # Account for repetitions
-        for _ in range(count):
-            R_x_list.append(R_x_layer)
-            R_y_list.append(R_y_layer)
-            R_z_list.append(R_z_layer)
+        for layer_spec in layer_specs:
+            layer_spec = layer_spec.strip()
+            parts = layer_spec.split(":")
+            
+            if len(parts) != 2:
+                print(f"Warning: Invalid layer spec: {layer_spec}")
+                continue
+            
+            count_str, layer_name = parts
+            
+            try:
+                count = int(count_str.strip())
+            except ValueError:
+                print(f"Warning: Could not parse count: {count_str}")
+                continue
+            
+            # Find layer object
+            layer_obj = find_layer_by_name(layers, layer_name.strip())
+            if layer_obj is None:
+                print(f"Warning: Layer '{layer_name}' not found")
+                continue
+            
+            # Calculate R_x, R_y, R_z for this layer
+            R_x_layer, R_y_layer, R_z_layer = calculate_single_layer_resistances(
+                layer_obj, box, conductivity_values
+            )
+            
+            # Account for repetitions
+            for _ in range(count):
+                R_x_list.append(R_x_layer)
+                R_y_list.append(R_y_layer)
+                R_z_list.append(R_z_layer)
     
     # Combine resistances
     # Lateral (X, Y): Layers in PARALLEL
