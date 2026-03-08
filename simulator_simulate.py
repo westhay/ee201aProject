@@ -103,9 +103,6 @@ def get_effective_conductivity(material_string, conductivity_values):
     return k_eff
 
 def parse_stackup(stackup_string):
-    """
-
-    """
     if not stackup_string or stackup_string == "":
         return []
     
@@ -276,8 +273,8 @@ def calculate_single_layer_resistances(layer_obj, box, conductivity_values):
     
     # Box area
     area_xy = box_width_m * box_length_m  # For R_z
-    area_yz = box_length_m * thickness_um  # For R_x
-    area_xz = box_width_m * thickness_um   # For R_y
+    area_yz = box_length_m * thickness_m  # For R_x
+    area_xz = box_width_m * thickness_m   # For R_y
     
     # Calculate resistances for this layer
     # R_x: heat flowing through width
@@ -352,8 +349,8 @@ def calculate_box_resistances(box, layers, conductivity_values):
     Returns:
         (R_x_total, R_y_total, R_z_total): tuple [K/W]
     """
-is_tim_box = "_TIM" in box.name
-is_bonding_box = "_bonding" in box.name
+    is_tim_box = "_TIM" in box.name
+    is_bonding_box = "_bonding" in box.name
     
     if is_tim_box or is_bonding_box:
         # ---- Case 1: TIM or Bonding Box ----
