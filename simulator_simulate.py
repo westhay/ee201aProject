@@ -59,238 +59,215 @@ def find_layer_by_name(layers, layer_name):
 
 def get_effective_conductivity(material_string, conductivity_values):
     """
-    Calculate effective thermal conductivity for composite materials.
-    
-    Handles both simple and composite material definitions:
-    - Simple: "Si" → single material
-    - Composite: "Cu-Foil:0.5,Si:0.5" → 50% Cu-Foil, 50% Si
-    
-    For composite materials, uses the rule of mixtures (parallel resistors):
-    1/k_eff = sum(fraction_i / k_i)
-    
-    This is the resistor model (worst case, conservative estimate).
-    
-    Args:
-        material_string: str - Material definition (simple or composite)
-        conductivity_values: Dict - Lookup table of k values [W/(m·K)]
-    
-    Returns:
-        k_eff: float - Effective thermal conductivity [W/(m·K)]
+    Parallel rule of mixtures: k_eff = Σ(f_i * k_i)
+    Used for: Composite materials where components are mixed side-by-side.
     """
-    
     if not material_string:
-        print(f"Warning: Empty material string, using default Si conductivity")
         return conductivity_values.get("Si", 105)
     
     material_string = material_string.strip()
     
-    # ---- Case 1: Simple material (no colon) ----
     if ":" not in material_string:
-        material_name = material_string.strip()
-        if material_name in conductivity_values:
-            return conductivity_values[material_name]
-        else:
-            print(f"Warning: Material '{material_name}' not found, using default Si")
-            return conductivity_values.get("Si", 105)
+        return conductivity_values.get(material_string, 105)
     
-    # ---- Case 2: Composite material (contains colons) ----
-    # Example: "Cu-Foil:0.5,Si:0.5"
-    
-    # Parse the composite definition
     components = material_string.split(",")
-    
+    k_eff = 0.0
     total_fraction = 0.0
-    inverse_k_sum = 0.0  # Sum for rule of mixtures: sum(f_i / k_i)
     
     for component in components:
         component = component.strip()
-        
-        # Split by colon
         parts = component.split(":")
         if len(parts) != 2:
-            print(f"Warning: Invalid component format: '{component}'")
             continue
         
         material_name = parts[0].strip()
-        fraction_str = parts[1].strip()
-        
-        # Parse fraction
         try:
-            fraction = float(fraction_str)
+            fraction = float(parts[1].strip())
         except ValueError:
-            print(f"Warning: Could not parse fraction '{fraction_str}' for material '{material_name}'")
             continue
         
-        # Look up conductivity
         if material_name not in conductivity_values:
-            print(f"Warning: Material '{material_name}' not in conductivity lookup table")
+            print(f"Warning: Material '{material_name}' not found")
             continue
         
         k = conductivity_values[material_name]
-        
         if k <= 0:
-            print(f"Warning: Material '{material_name}' has invalid conductivity: {k}")
             continue
         
-        # Add to sum using rule of mixtures (resistor model)
-        # For parallel resistors: 1/R_total = sum(f_i / R_i)
-        # Which translates to: 1/k_eff = sum(f_i / k_i)
-        inverse_k_sum += fraction / k
+        k_eff += fraction * k
         total_fraction += fraction
     
-    # Handle edge cases
-    if total_fraction <= 0 or inverse_k_sum <= 0:
-        print(f"Warning: Invalid composite material definition: '{material_string}'")
+    if total_fraction <= 0:
         return conductivity_values.get("Si", 105)
-    
-    # Normalize fractions and calculate effective conductivity
-    # k_eff = total_fraction / inverse_k_sum
-    k_eff = total_fraction / inverse_k_sum
     
     return k_eff
 
 
-def calculate_stackup_resistance(box, layers, conductivity_values):
+def calculate_single_layer_resistances(layer_obj, box, conductivity_values):
     """
-    Calculate total thermal resistance of a box's stackup (vertical Z-direction).
+    Calculate R_x, R_y, R_z for a SINGLE layer.
     
-    NOW SUPPORTS COMPOSITE MATERIALS!
-    
-    The stackup string defines layers and their properties. For example:
-        "1:5nm_GPU_active,2:5nm_GPU_metal" means:
-        - 1 repetition of layer "5nm_GPU_active"
-        - 2 repetitions of layer "5nm_GPU_metal"
-    
-    Each layer can have:
-    - Simple material: material="Si"
-    - Composite material: material="Cu-Foil:0.5,Si:0.5"
+    Uses the parallel rule of mixtures for composite materials.
     
     Args:
-        box: Box object with stackup property
-        layers: List[Layer] objects from parse_Layer_netlist()
-        conductivity_values: Dict mapping material names to k values [W/(m·K)]
+        layer_obj: Layer object with get_material() and get_thickness()
+        box: Box object with width, length, height
+        conductivity_values: Dict of k values
     
     Returns:
-        R_z: float - Total thermal resistance [K/W]
+        (R_x, R_y, R_z): tuple of float [K/W]
     """
-    if not box.stackup or box.stackup == "":
+    
+    # Get layer properties
+    material_string = layer_obj.get_material()
+    thickness_um = layer_obj.get_thickness()
+    
+    if thickness_um is None or thickness_um <= 0:
+        return (0.0, 0.0, 0.0)
+    
+    # Convert to meters
+    thickness_m = thickness_um * 1e-6
+    box_width_m = box.width / 1000
+    box_length_m = box.length / 1000
+    box_height_m = box.height / 1000
+    
+    # Calculate effective conductivity (parallel for composite)
+    k_eff = get_effective_conductivity(material_string, conductivity_values)
+    
+    if k_eff <= 0:
+        return (0.0, 0.0, 0.0)
+    
+    # Box area
+    area_xy = box_width_m * box_length_m  # For R_z
+    area_yz = box_length_m * thickness_um  # For R_x
+    area_xz = box_width_m * thickness_um   # For R_y
+    
+    # Calculate resistances for this layer
+    # R_x: heat flowing through width
+    if area_yz > 0:
+        R_x = box_width_m / (k_eff * area_yz)
+    else:
+        R_x = 0.0
+    
+    # R_y: heat flowing through length
+    if area_xz > 0:
+        R_y = box_length_m / (k_eff * area_xz)
+    else:
+        R_y = 0.0
+    
+    # R_z: heat flowing through thickness
+    if area_xy > 0:
+        R_z = thickness_m / (k_eff * area_xy)
+    else:
+        R_z = 0.0
+    
+    return (R_x, R_y, R_z)
+
+
+def combine_parallel_resistances(resistances_list):
+    """
+    Combine resistances in PARALLEL: 1/R_total = Σ(1/R_i)
+    
+    Args:
+        resistances_list: List of resistance values [K/W]
+    
+    Returns:
+        R_total: float [K/W]
+    """
+    if not resistances_list or len(resistances_list) == 0:
         return 0.0
     
-    # Get box area for heat flow (X-Y plane)
-    width_mm = box.width
-    length_mm = box.length
-    area_m2 = (width_mm / 1000) * (length_mm / 1000)  # Convert mm² to m²
+    inverse_sum = sum(1/r for r in resistances_list if r > 0)
     
-    if area_m2 <= 0:
+    if inverse_sum <= 0:
         return 0.0
     
-    total_resistance = 0.0
+    return 1 / inverse_sum
+
+
+def combine_series_resistances(resistances_list):
+    """
+    Combine resistances in SERIES: R_total = Σ(R_i)
     
-    # Parse stackup string: "1:layer1,2:layer2,..." → [("1", "layer1"), ("2", "layer2"), ...]
-    layer_specs = box.stackup.split(",")
+    Args:
+        resistances_list: List of resistance values [K/W]
     
-    for layer_spec in layer_specs:
-        layer_spec = layer_spec.strip()
-        
-        # Split by colon to get count and layer name
-        parts = layer_spec.split(":")
-        if len(parts) != 2:
-            print(f"Warning: Invalid layer spec format: '{layer_spec}' in box {box.name}")
-            continue
-        
-        count_str, layer_name = parts
-        count_str = count_str.strip()
-        layer_name = layer_name.strip()
-        
-        # Parse count
-        try:
-            count = int(count_str)
-        except ValueError:
-            print(f"Warning: Could not parse count '{count_str}' in box {box.name}")
-            continue
-        
-        # Find layer object
-        layer_obj = find_layer_by_name(layers, layer_name)
-        if layer_obj is None:
-            print(f"Warning: Layer '{layer_name}' not found in layer database for box {box.name}")
-            continue
-        
-        # Get material and thickness
-        material_string = layer_obj.get_material()
-        thickness_um = layer_obj.get_thickness()
-        
-        if thickness_um is None or thickness_um <= 0:
-            print(f"Warning: Layer '{layer_name}' has invalid thickness: {thickness_um}")
-            continue
-        
-        # Convert thickness from micrometers to meters
-        thickness_m = thickness_um * 1e-6
-        
-        # ---- NEW: Get effective conductivity for composite materials ----
-        k_eff = get_effective_conductivity(material_string, conductivity_values)
-        
-        if k_eff <= 0:
-            print(f"Warning: Layer '{layer_name}' has invalid effective conductivity: {k_eff}")
-            continue
-        
-        # Calculate resistance for this layer: R = t / (k * A)
-        R_layer = thickness_m / (k_eff * area_m2)
-        
-        # Account for multiple repetitions
-        total_resistance += count * R_layer
-    
-    return total_resistance
+    Returns:
+        R_total: float [K/W]
+    """
+    return sum(r for r in resistances_list if r >= 0)
 
 
 def calculate_box_resistances(box, layers, conductivity_values):
     """
-    Calculate thermal resistances in X, Y, and Z directions for a box.
+    Calculate total R_x, R_y, R_z for a box's stackup.
     
-    The box is modeled as a rectangular conductor with:
-    - R_x: resistance for heat flowing in X direction (through width)
-    - R_y: resistance for heat flowing in Y direction (through length)
-    - R_z: resistance for heat flowing in Z direction (through stackup)
+    APPROACH:
+    1. For each layer in stackup: calculate individual R_x, R_y, R_z
+    2. Combine horizontally (R_x, R_y) in PARALLEL
+    3. Combine vertically (R_z) in SERIES
     
     Args:
-        box: Box object
+        box: Box object with stackup property
         layers: List[Layer] objects
-        conductivity_values: Dict of material conductivities
+        conductivity_values: Dict of k values
     
     Returns:
-        (R_x, R_y, R_z): tuple of float - Resistances [K/W]
+        (R_x_total, R_y_total, R_z_total): tuple [K/W]
     """
     
-    # Get box dimensions in meters
-    width_m = box.width / 1000
-    length_m = box.length / 1000
-    height_m = box.height / 1000
+    if not box.stackup or box.stackup == "":
+        return (0.0, 0.0, 0.0)
     
-    # For lateral heat flow, use silicon conductivity (main material)
-    k_lateral = conductivity_values.get("Si", 105)  # Silicon: 105 W/(m·K)
+    # Parse stackup: "1:layer1,2:layer2"
+    layer_specs = box.stackup.split(",")
     
-    # --- R_X: Heat flowing in X direction ---
-    # Heat travels through WIDTH dimension
-    # Perpendicular area = length × height
-    area_yz = length_m * height_m
-    if area_yz > 0:
-        R_x = width_m / (k_lateral * area_yz)
-    else:
-        R_x = 0.0
+    R_x_list = []  # For parallel combination
+    R_y_list = []  # For parallel combination
+    R_z_list = []  # For series combination
     
-    # ---- R_Y: Heat flowing in Y direction ---
-    # Heat travels through LENGTH dimension
-    # Perpendicular area = width × height
-    area_xz = width_m * height_m
-    if area_xz > 0:
-        R_y = length_m / (k_lateral * area_xz)
-    else:
-        R_y = 0.0
+    for layer_spec in layer_specs:
+        layer_spec = layer_spec.strip()
+        parts = layer_spec.split(":")
+        
+        if len(parts) != 2:
+            print(f"Warning: Invalid layer spec: {layer_spec}")
+            continue
+        
+        count_str, layer_name = parts
+        
+        try:
+            count = int(count_str.strip())
+        except ValueError:
+            print(f"Warning: Could not parse count: {count_str}")
+            continue
+        
+        # Find layer object
+        layer_obj = find_layer_by_name(layers, layer_name.strip())
+        if layer_obj is None:
+            print(f"Warning: Layer '{layer_name}' not found")
+            continue
+        
+        # Calculate R_x, R_y, R_z for this layer
+        R_x_layer, R_y_layer, R_z_layer = calculate_single_layer_resistances(
+            layer_obj, box, conductivity_values
+        )
+        
+        # Account for repetitions
+        for _ in range(count):
+            R_x_list.append(R_x_layer)
+            R_y_list.append(R_y_layer)
+            R_z_list.append(R_z_layer)
     
-    # ---- R_Z: Heat flowing in Z direction (vertical through stackup) ---
-    R_z = calculate_stackup_resistance(box, layers, conductivity_values)
+    # Combine resistances
+    # Lateral (X, Y): Layers in PARALLEL
+    R_x_total = combine_parallel_resistances(R_x_list)
+    R_y_total = combine_parallel_resistances(R_y_list)
     
-    return R_x, R_y, R_z
-
+    # Vertical (Z): Layers in SERIES
+    R_z_total = combine_series_resistances(R_z_list)
+    
+    return (R_x_total, R_y_total, R_z_total)
 
 def calculate_total_path_resistance(box, resistances_dict, bonding_box_list, TIM_boxes, heatsink_obj):
     """
