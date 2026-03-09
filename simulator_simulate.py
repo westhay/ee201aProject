@@ -96,11 +96,12 @@ def get_effective_conductivity(material_string, conductivity_values):
         
         k_eff += fraction * k
         total_fraction += fraction
+        
     
     if total_fraction <= 0:
         return conductivity_values.get("Si", 105)
     
-    return k_eff
+    return k_eff / total_fraction
 
 def parse_stackup(stackup_string):
     if not stackup_string or stackup_string == "":
