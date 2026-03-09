@@ -1,6 +1,6 @@
 from .base import ThermalSimulator
 import numpy as np
-import danka_thermal_api
+#import danka_thermal_api
 import time
 from thermal_simulators.anemoi_dataframe import DataFrame
 from therm_xml_parser import *
@@ -79,10 +79,10 @@ class AnemoiSim(ThermalSimulator):
     def __init__(self, name = "TechCon_dray4_2p5D_062325_5x5"):
         cfg = danka_thermal_api.Configuration(
             host='https://anemoisoftware.com/api',
-            api_key={
-                # api key here. Remove if hosted online (e.g. github)!
-                'Authorization': <paste API key here!>
-            },
+            #api_key={
+            #    # api key here. Remove if hosted online (e.g. github)!
+            #    'Authorization': <paste API key here!>
+            #},
             api_key_prefix={
                 'Authorization': 'Token'
             }
