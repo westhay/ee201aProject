@@ -1,4 +1,4 @@
-from sortedcontainers import SortedList
+#from sortedcontainers import SortedList
 import sys
 import random
 # deep copy
