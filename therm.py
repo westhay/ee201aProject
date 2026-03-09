@@ -27,8 +27,8 @@ import re
 from collections import defaultdict
 
 import numpy as np
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import r2_score
+#from sklearn.linear_model import LinearRegression
+#from sklearn.metrics import r2_score
 
 import re
 from pathlib import Path
