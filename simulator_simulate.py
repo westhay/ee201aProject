@@ -410,109 +410,178 @@ def calculate_box_resistances(box, layers, conductivity_values):
     
     return (R_x_total, R_y_total, R_z_total)
 
-def calculate_total_path_resistance(box, resistances_dict, bonding_box_list, TIM_boxes, heatsink_obj):
+def overlap_length_1d(a0, a1, b0, b1):
     """
-    Calculate total thermal resistance path from a box to ambient.
-    
-    Path: Box stackup → Bonding layer → TIM → Heatsink → Ambient
-    
-    Args:
-        box: Box object (chiplet)
-        resistances_dict: Dict mapping box names to (R_x, R_y, R_z)
-        bonding_box_list: List of bonding Box objects
-        TIM_boxes: List of TIM Box objects
-        heatsink_obj: Dict with heatsink properties
-    
+    Return positive overlap length between two 1D intervals.
+    If they do not overlap, return 0.0.
+    """
+    return max(0.0, min(a1, b1) - max(a0, b0))
+
+
+def get_box_bounds(box):
+    """
+    Return:
+        x0, x1, y0, y1, z0, z1
+    Prefer explicit end_* attributes if they exist.
+    """
+    x0 = float(box.start_x)
+    y0 = float(box.start_y)
+    z0 = float(box.start_z)
+
+    x1 = float(box.end_x) if hasattr(box, "end_x") else x0 + float(box.width)
+    y1 = float(box.end_y) if hasattr(box, "end_y") else y0 + float(box.length)
+    z1 = float(box.end_z) if hasattr(box, "end_z") else z0 + float(box.height)
+
+    return x0, x1, y0, y1, z0, z1
+
+
+def boxes_touch_in_x(box1, box2, tol=1e-6):
+    """
+    Check whether two boxes touch on an x-facing surface.
+    Return:
+        (is_neighbor, contact_area, overlap_y, overlap_z)
+    """
+    x10, x11, y10, y11, z10, z11 = get_box_bounds(box1)
+    x20, x21, y20, y21, z20, z21 = get_box_bounds(box2)
+
+    touch_x = abs(x11 - x20) <= tol or abs(x21 - x10) <= tol
+    overlap_y = overlap_length_1d(y10, y11, y20, y21)
+    overlap_z = overlap_length_1d(z10, z11, z20, z21)
+
+    contact_area = overlap_y * overlap_z
+    is_neighbor = touch_x and (overlap_y > tol) and (overlap_z > tol)
+
+    return is_neighbor, contact_area, overlap_y, overlap_z
+
+
+def boxes_touch_in_y(box1, box2, tol=1e-6):
+    """
+    Check whether two boxes touch on a y-facing surface.
+    Return:
+        (is_neighbor, contact_area, overlap_x, overlap_z)
+    """
+    x10, x11, y10, y11, z10, z11 = get_box_bounds(box1)
+    x20, x21, y20, y21, z20, z21 = get_box_bounds(box2)
+
+    touch_y = abs(y11 - y20) <= tol or abs(y21 - y10) <= tol
+    overlap_x = overlap_length_1d(x10, x11, x20, x21)
+    overlap_z = overlap_length_1d(z10, z11, z20, z21)
+
+    contact_area = overlap_x * overlap_z
+    is_neighbor = touch_y and (overlap_x > tol) and (overlap_z > tol)
+
+    return is_neighbor, contact_area, overlap_x, overlap_z
+
+
+def boxes_touch_in_z(box1, box2, tol=1e-6):
+    """
+    Check whether two boxes touch on a z-facing surface.
+    Return:
+        (is_neighbor, contact_area, overlap_x, overlap_y)
+    """
+    x10, x11, y10, y11, z10, z11 = get_box_bounds(box1)
+    x20, x21, y20, y21, z20, z21 = get_box_bounds(box2)
+
+    touch_z = abs(z11 - z20) <= tol or abs(z21 - z10) <= tol
+    overlap_x = overlap_length_1d(x10, x11, x20, x21)
+    overlap_y = overlap_length_1d(y10, y11, y20, y21)
+
+    contact_area = overlap_x * overlap_y
+    is_neighbor = touch_z and (overlap_x > tol) and (overlap_y > tol)
+
+    return is_neighbor, contact_area, overlap_x, overlap_y
+
+
+def build_contact_map(all_boxes, tol=1e-6):
+    """
+    Build a richer contact map.
+
     Returns:
-        R_total: float - Total resistance [K/W]
-    """
-    
-    # Start with the box's own Z-direction resistance (stackup)
-    R_total = resistances_dict[box.name][2]  # R_z of the box itself
-    
-    # ---- Add bonding layer resistance ----
-    for bonding_box in bonding_box_list:
-        # Check if this bonding box is associated with current box
-        if bonding_box.name.startswith(box.name) and "bonding" in bonding_box.name:
-            R_bonding = resistances_dict.get(bonding_box.name, (0, 0, 0))[2]  # R_z
-            R_total += R_bonding
-    
-    # ---- Add TIM resistance ----
-    for tim_box in TIM_boxes:
-        # Check if this TIM box is associated with current box
-        if tim_box.name.startswith(box.name) and "TIM" in tim_box.name:
-            R_tim = resistances_dict.get(tim_box.name, (0, 0, 0))[2]  # R_z
-            R_total += R_tim
-    
-    # ---- Add heatsink resistance ----
-    if heatsink_obj:
-        try:
-            hc = float(heatsink_obj.get("hc", 10000))  # Heat transfer coefficient [W/(m²·K)]
-            dx_mm = float(heatsink_obj.get("base_dx", 30))  # Width [mm]
-            dy_mm = float(heatsink_obj.get("base_dy", 30))  # Length [mm]
-            
-            # Convert to meters
-            dx_m = dx_mm / 1000
-            dy_m = dy_mm / 1000
-            
-            area_m2 = dx_m * dy_m
-            
-            if area_m2 > 0 and hc > 0:
-                R_heatsink = 1.0 / (hc * area_m2)
-                R_total += R_heatsink
-        except (ValueError, TypeError) as e:
-            print(f"Warning: Could not parse heatsink parameters: {e}")
-    
-    return R_total
+        contact_map[box.name] = {
+            "x": [
+                {
+                    "neighbor": neighbor_name,
+                    "contact_area": ...,
+                    "overlap_1": ...,
+                    "overlap_2": ...
+                },
+                ...
+            ],
+            "y": [...],
+            "z": [...]
+        }
 
-
-def calculate_box_temperatures(box, all_boxes, bonding_box_list, TIM_boxes, 
-                               heatsink_obj, resistances_dict):
+    Also returns:
+        name_to_box[box.name] = box
     """
-    Calculate peak and average temperatures for a box.
-    
-    Temperature calculation approach:
-    1. For boxes with power (chiplets): T = T_ambient + power * R_total
-    2. For boxes without power: Use a simplified approach
-    
-    Note: This is a simplified model. A more sophisticated approach would solve
-    the full thermal network using Kirchhoff's laws.
-    
-    Args:
-        box: Box object
-        all_boxes: List of all boxes (for reference)
-        bonding_box_list: List of bonding boxes
-        TIM_boxes: List of TIM boxes
-        heatsink_obj: Dict with heatsink properties
-        resistances_dict: Dict mapping box names to (R_x, R_y, R_z)
-    
-    Returns:
-        (T_peak, T_avg): tuple of float - Peak and average temperatures [°C]
-    """
-    
-    T_ambient = 25.0  # Ambient temperature [°C]
-    
-    # ---- Case 1: Box has power (chiplet) ----
-    if box.power and box.power > 0:
-        # Calculate total resistance path to ambient
-        R_total = calculate_total_path_resistance(box, resistances_dict, bonding_box_list, 
-                                                   TIM_boxes, heatsink_obj)
-        
-        # Temperature rise above ambient: ΔT = P * R
-        delta_T = box.power * R_total
-        
-        T_peak = T_ambient + delta_T
-        T_avg = T_ambient + delta_T / 2
-    
-    # ---- Case 2: Box has no power (bonding, TIM, etc.) ----
-    else:
-        # For non-power-dissipating layers, set to ambient
-        # (More sophisticated models would interpolate between adjacent layers)
-        T_peak = T_ambient
-        T_avg = T_ambient
-    
-    return T_peak, T_avg
+    contact_map = {
+        box.name: {"x": [], "y": [], "z": []}
+        for box in all_boxes
+    }
+    name_to_box = {box.name: box for box in all_boxes}
 
+    n = len(all_boxes)
+
+    for i in range(n):
+        b1 = all_boxes[i]
+        for j in range(i + 1, n):
+            b2 = all_boxes[j]
+
+            # Check x contact
+            is_x, area_x, oy, oz = boxes_touch_in_x(b1, b2, tol)
+            if is_x:
+                info_12 = {
+                    "neighbor": b2.name,
+                    "contact_area": area_x,
+                    "overlap_1": oy,   # y overlap
+                    "overlap_2": oz    # z overlap
+                }
+                info_21 = {
+                    "neighbor": b1.name,
+                    "contact_area": area_x,
+                    "overlap_1": oy,
+                    "overlap_2": oz
+                }
+                contact_map[b1.name]["x"].append(info_12)
+                contact_map[b2.name]["x"].append(info_21)
+
+            # Check y contact
+            is_y, area_y, ox, oz = boxes_touch_in_y(b1, b2, tol)
+            if is_y:
+                info_12 = {
+                    "neighbor": b2.name,
+                    "contact_area": area_y,
+                    "overlap_1": ox,   # x overlap
+                    "overlap_2": oz    # z overlap
+                }
+                info_21 = {
+                    "neighbor": b1.name,
+                    "contact_area": area_y,
+                    "overlap_1": ox,
+                    "overlap_2": oz
+                }
+                contact_map[b1.name]["y"].append(info_12)
+                contact_map[b2.name]["y"].append(info_21)
+
+            # Check z contact
+            is_z, area_z, ox, oy = boxes_touch_in_z(b1, b2, tol)
+            if is_z:
+                info_12 = {
+                    "neighbor": b2.name,
+                    "contact_area": area_z,
+                    "overlap_1": ox,   # x overlap
+                    "overlap_2": oy    # y overlap
+                }
+                info_21 = {
+                    "neighbor": b1.name,
+                    "contact_area": area_z,
+                    "overlap_1": ox,
+                    "overlap_2": oy
+                }
+                contact_map[b1.name]["z"].append(info_12)
+                contact_map[b2.name]["z"].append(info_21)
+
+    return contact_map, name_to_box
 
 # ============================================================================
 # MAIN SIMULATION FUNCTION
@@ -594,18 +663,7 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj=None,
     print(f"  - TIM layers: {len(TIM_boxes)}")
     
     # ========================================================================
-    # STEP 2: Validate inputs
-    # ========================================================================
-    if not all_boxes:
-        print("[ERROR] No boxes found in input!")
-        return results
-    
-    if not layers:
-        print("[ERROR] No layer definitions provided!")
-        return results
-    
-    # ========================================================================
-    # STEP 3: Calculate thermal resistances for all boxes
+    # STEP 2: Calculate thermal resistances for all boxes
     # ========================================================================
     print("\n[Step 1] Calculating thermal resistances...")
     
@@ -625,33 +683,22 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj=None,
             print(f"[ERROR] Failed to calculate resistance for {box.name}: {e}")
             # Use zero resistance as fallback
             resistances_dict[box.name] = (0.0, 0.0, 0.0)
+
+
+    # ----------------------------------------------------------------------
+    # Build contact map
+    # ----------------------------------------------------------------------
+    contact_map, name_to_box = build_contact_map(all_boxes, tol=1e-6)
     
+    print("\n[Contact Map Summary]")
+    num_x = sum(len(v["x"]) for v in contact_map.values()) // 2
+    num_y = sum(len(v["y"]) for v in contact_map.values()) // 2
+    num_z = sum(len(v["z"]) for v in contact_map.values()) // 2
+    print(f"  X contacts: {num_x}")
+    print(f"  Y contacts: {num_y}")
+    print(f"  Z contacts: {num_z}")
     # ========================================================================
-    # STEP 4: Calculate temperatures for all boxes
-    # ========================================================================
-    print("\n[Step 2] Calculating temperatures...")
-    
-    for box in all_boxes:
-        try:
-            T_peak, T_avg = calculate_box_temperatures(box, all_boxes, bonding_box_list, 
-                                                       TIM_boxes, heatsink_obj, 
-                                                       resistances_dict)
-            
-            R_x, R_y, R_z = resistances_dict[box.name]
-            
-            # Store result
-            results[box.name] = (T_peak, T_avg, R_x, R_y, R_z)
-            
-            if box.power > 0:
-                print(f"  {box.name:25} - T: {T_peak:.2f}°C (peak), {T_avg:.2f}°C (avg) - Power: {box.power:.1f}W")
-            else:
-                print(f"  {box.name:25} - T: {T_peak:.2f}°C (peak), {T_avg:.2f}°C (avg)")
-        
-        except Exception as e:
-            print(f"[ERROR] Failed to calculate temperature for {box.name}: {e}")
-            # Use ambient as fallback
-            R_x, R_y, R_z = resistances_dict.get(box.name, (0, 0, 0))
-            results[box.name] = (25.0, 25.0, R_x, R_y, R_z)
+   
     
     # ========================================================================
     # STEP 5: Summary
