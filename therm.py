@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import List, Tuple
 import csv
 
-from test_script import simulator_simulate()
+from test_script import simulator_simulate
 
 sns.set()
 
