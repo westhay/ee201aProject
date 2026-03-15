@@ -7,9 +7,23 @@ from rearrange import Box
 
 # Conductivity values
 conductivity_values = {
-    "Air": 0.025, "Si": 105, "Cu-Foil": 400, "EpAg": 1.6, "TIM": 100
+    "Air": 0.025,
+    "FR-4": 0.1,
+    "Cu-Foil": 400,
+    "Si": 105,
+    "Aluminium": 205,
+    "TIM001": 100,
+    "Glass": 1.36,
+    "TIM": 100,
+    "SnPb 67/37": 36,
+    "Epoxy, Silver filled": 1.6,
+    "SiO2": 1.1,
+    "AlN": 237,
+    "EpAg": 1.6,
+    "Infill_material": 19,
+    "Polymer1": 675,
+    "TIM0p5": 1.0
 }
-
 # Create simple test boxes
 boxes = [
     Box(0, 0, 0, 30, 30, 0.5, 0, 'Si', 0, 'interposer'),
