@@ -32,11 +32,11 @@ boxes = [
     Box(2, 0, 0.48, 26, 32, 0.02, 0, '1:Cu-Foil:70.0,EpAg:30.0', 0, 'bonding'),
 ]
 
-def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj=None, 
-                       heatsink_list=None, heatsink_name=None, bonding_list=None,
-                       bonding_name_type_dict=None, is_repeat=False, 
-                       min_TIM_height=0.1, power_dict=None, anemoi_parameter_ID = anemoi_parameter_ID,
-                       layers=None):
+def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj, 
+                       heatsink_list, heatsink_name, bonding_list,
+                       bonding_name_type_dict, is_repeat, 
+                       min_TIM_height, power_dict, anemoi_parameter_ID,
+                       layers):
     all_boxes = boxes + bonding_boxlist+ TIM_boxes
                            
     print("Creating voxel grid...")
