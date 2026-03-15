@@ -10,7 +10,7 @@ import math
 import matplotlib.pyplot as plt
 import seaborn as sns
 import xml.etree.ElementTree as ET
-from thermal_simulators.factory import SimulatorFactory
+#from thermal_simulators.factory import SimulatorFactory
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
@@ -1594,7 +1594,7 @@ def therm(therm_conf, heatsink_conf, bonding_conf, heatsink, out_dir, project_na
     bonding_box_list = create_all_bonding(box_list = boxes, name_type_dict = bonding_name_type_dict, bonding_list = bonding_list) #        
     TIM_boxes = create_TIM_to_heatsink(box_list = boxes, material = "TIM0p5", min_TIM_height = min_TIM_height, system_type = system_type)
     heatsink_obj = create_heat_sink(box_list = boxes, heatsink_list = heatsink_list, heatsink_name = heatsink_name, min_TIM_height = min_TIM_height, scale_factor_x = 0, scale_factor_y = 0, area_scale_factor = 1)
-    create_power_source_backside(boxes) #
+    #create_power_source_backside(boxes) #
     power_dict = initialize_power_dict_values(boxes)
 
     # print("After creating bonding, TIM and heatsink:")
@@ -1767,8 +1767,8 @@ def initialize_power_dict_values(boxes):
             power_dict["HBM"] = box.power
         elif(box.chiplet_parent.get_chiplet_type()[0:5] == "HBM_l"):
             power_dict["HBM_l"] = box.power
-        elif(box.chiplet_parent.get_chiplet_type() == "Power_Source"):
-            power_dict["Power_Source"] = box.power
+        #elif(box.chiplet_parent.get_chiplet_type() == "Power_Source"):
+            #power_dict["Power_Source"] = box.power
     return power_dict
 
 # dedeepyo : 4-Jun-25
