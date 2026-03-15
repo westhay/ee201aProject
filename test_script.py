@@ -37,7 +37,7 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
                        bonding_name_type_dict, is_repeat, 
                        min_TIM_height, power_dict, anemoi_parameter_ID,
                        layers):
-    all_boxes = boxes + bonding_boxlist+ TIM_boxes
+    all_boxes = boxes + bonding_box_list+ TIM_boxes
                            
     print("Creating voxel grid...")
     grid_info = create_voxel_grid(all_boxes, voxel_size=0.1, 
@@ -82,7 +82,7 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
                 })
     pd.DataFrame(samples).to_csv('voxel_sample.csv', index=False)
 
-print("✓ Created grid_summary.csv")
-print("✓ Created material_distribution.csv")
-print(f"✓ Created voxel_sample.csv ({len(samples)} samples)")
-print("\nDone! Open CSV files to inspect results.")
+    print("✓ Created grid_summary.csv")
+    print("✓ Created material_distribution.csv")
+    print(f"✓ Created voxel_sample.csv ({len(samples)} samples)")
+    print("\nDone! Open CSV files to inspect results.")
