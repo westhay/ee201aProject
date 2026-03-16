@@ -9,6 +9,8 @@ and thermal resistance calculation.
 import re
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Any
+from PySpice.Spice.Netlist import Circuit
+
 
 
 def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=None):
@@ -444,6 +446,265 @@ def _parse_material_string(material_str, conductivity_values):
     # Fallback: treat the whole string as a material name
     mat = _resolve_material_alias(material_str.strip(), conductivity_values)
     return conductivity_values.get(mat, 1.0), mat
+
+
+# ---------------------------------------------------------
+# Helper: unique node name for each voxel
+# ---------------------------------------------------------
+def voxel_node(i, j, k):
+    return f"n_{i}_{j}_{k}"
+
+
+# ---------------------------------------------------------
+# Helper: thermal resistance between two neighboring voxels
+# direction is one of 'x', 'y', 'z'
+#
+# Uses center-to-center resistance:
+#   R = (L1 / (k1*A)) + (L2 / (k2*A))
+#
+# For equal cubic voxels:
+#   L1 = L2 = d/2
+# ---------------------------------------------------------
+def interface_resistance(k1, k2, d_m, direction):
+    if k1 <= 0:
+        k1 = 1e-12
+    if k2 <= 0:
+        k2 = 1e-12
+
+    if direction == 'x':
+        area = d_m * d_m   # dy * dz
+    elif direction == 'y':
+        area = d_m * d_m   # dx * dz
+    elif direction == 'z':
+        area = d_m * d_m   # dx * dy
+    else:
+        raise ValueError("direction must be 'x', 'y', or 'z'")
+
+    return (d_m / 2.0) / (k1 * area) + (d_m / 2.0) / (k2 * area)
+
+
+# ---------------------------------------------------------
+# Optional helper: convection / ambient resistance
+# R = 1 / (h*A)
+# h in W/(m^2*K)
+# ---------------------------------------------------------
+def boundary_resistance(h, area_m2):
+    if h is None or h <= 0:
+        return None
+    return 1.0 / (h * area_m2)
+
+
+# ---------------------------------------------------------
+# Build PySpice circuit from voxel grid
+# ---------------------------------------------------------
+def build_thermal_circuit_from_grid(
+    conductivity_grid,
+    power_grid,
+    voxel_size_mm,
+    h_top=1000.0,
+    h_side=10.0,
+    h_bottom=100.0,
+    active_mask=None
+):
+    """
+    Parameters
+    ----------
+    conductivity_grid : np.ndarray, shape (nx, ny, nz)
+        Thermal conductivity in W/(m*K)
+    power_grid : np.ndarray, shape (nx, ny, nz)
+        Power density in W/m^3
+    voxel_size_mm : float
+        Cubic voxel edge length in mm
+    h_top, h_side, h_bottom : float or None
+        Ambient boundary coefficients in W/(m^2*K)
+    active_mask : np.ndarray of bool, optional
+        If provided, only active voxels are connected/simulated.
+        If None, all voxels are included.
+
+    Returns
+    -------
+    circuit : PySpice Circuit
+    """
+    nx, ny, nz = conductivity_grid.shape
+
+    if active_mask is None:
+        active_mask = np.ones((nx, ny, nz), dtype=bool)
+
+    circuit = Circuit("3D Thermal Network")
+
+    # convert mm -> m
+    d_m = voxel_size_mm * 1e-3
+    voxel_volume_m3 = d_m ** 3
+    face_area_m2 = d_m ** 2
+
+    resistor_count = 0
+    source_count = 0
+    ambient_count = 0
+
+    # --------------------------------------------------
+    # 1) Neighbor resistors
+    # Only connect in +x, +y, +z to avoid duplicates
+    # --------------------------------------------------
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                if not active_mask[i, j, k]:
+                    continue
+
+                n1 = voxel_node(i, j, k)
+                k1 = conductivity_grid[i, j, k]
+
+                # +x neighbor
+                if i + 1 < nx and active_mask[i + 1, j, k]:
+                    k2 = conductivity_grid[i + 1, j, k]
+                    R = interface_resistance(k1, k2, d_m, 'x')
+                    circuit.R(f"rx_{resistor_count}", n1, voxel_node(i + 1, j, k), R)
+                    resistor_count += 1
+
+                # +y neighbor
+                if j + 1 < ny and active_mask[i, j + 1, k]:
+                    k2 = conductivity_grid[i, j + 1, k]
+                    R = interface_resistance(k1, k2, d_m, 'y')
+                    circuit.R(f"ry_{resistor_count}", n1, voxel_node(i, j + 1, k), R)
+                    resistor_count += 1
+
+                # +z neighbor
+                if k + 1 < nz and active_mask[i, j, k + 1]:
+                    k2 = conductivity_grid[i, j, k + 1]
+                    R = interface_resistance(k1, k2, d_m, 'z')
+                    circuit.R(f"rz_{resistor_count}", n1, voxel_node(i, j, k + 1), R)
+                    resistor_count += 1
+
+    # --------------------------------------------------
+    # 2) Heat injection current sources
+    #
+    # power_grid is in W/m^3, so voxel power:
+    #   P_voxel = power_density * voxel_volume
+    #
+    # In thermal-electric analogy:
+    #   heat flow -> current
+    # --------------------------------------------------
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                if not active_mask[i, j, k]:
+                    continue
+
+                p_density = power_grid[i, j, k]
+                p_voxel = p_density * voxel_volume_m3
+
+                if abs(p_voxel) > 0:
+                    circuit.I(f"p_{source_count}", circuit.gnd, voxel_node(i, j, k), p_voxel)
+                    source_count += 1
+
+    # --------------------------------------------------
+    # 3) Ambient boundary resistors
+    #
+    # For each exposed face, connect to ground through R = 1/(hA)
+    # --------------------------------------------------
+    R_top = boundary_resistance(h_top, face_area_m2)
+    R_side = boundary_resistance(h_side, face_area_m2)
+    R_bottom = boundary_resistance(h_bottom, face_area_m2)
+
+    def is_exposed(i2, j2, k2):
+        if i2 < 0 or i2 >= nx:
+            return True
+        if j2 < 0 or j2 >= ny:
+            return True
+        if k2 < 0 or k2 >= nz:
+            return True
+        return not active_mask[i2, j2, k2]
+
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                if not active_mask[i, j, k]:
+                    continue
+
+                n = voxel_node(i, j, k)
+
+                # top (+z)
+                if is_exposed(i, j, k + 1) and R_top is not None:
+                    circuit.R(f"rtop_{ambient_count}", n, circuit.gnd, R_top)
+                    ambient_count += 1
+
+                # bottom (-z)
+                if is_exposed(i, j, k - 1) and R_bottom is not None:
+                    circuit.R(f"rbot_{ambient_count}", n, circuit.gnd, R_bottom)
+                    ambient_count += 1
+
+                # x sides
+                if is_exposed(i - 1, j, k) and R_side is not None:
+                    circuit.R(f"rxm_{ambient_count}", n, circuit.gnd, R_side)
+                    ambient_count += 1
+                if is_exposed(i + 1, j, k) and R_side is not None:
+                    circuit.R(f"rxp_{ambient_count}", n, circuit.gnd, R_side)
+                    ambient_count += 1
+
+                # y sides
+                if is_exposed(i, j - 1, k) and R_side is not None:
+                    circuit.R(f"rym_{ambient_count}", n, circuit.gnd, R_side)
+                    ambient_count += 1
+                if is_exposed(i, j + 1, k) and R_side is not None:
+                    circuit.R(f"ryp_{ambient_count}", n, circuit.gnd, R_side)
+                    ambient_count += 1
+
+    return circuit
+
+
+# ---------------------------------------------------------
+# Solve temperature map
+# ---------------------------------------------------------
+def solve_temperature_grid(
+    conductivity_grid,
+    power_grid,
+    voxel_size_mm,
+    T_ambient=25.0,
+    h_top=1000.0,
+    h_side=10.0,
+    h_bottom=100.0,
+    active_mask=None
+):
+    """
+    Returns absolute temperature grid in degC.
+    """
+    circuit = build_thermal_circuit_from_grid(
+        conductivity_grid=conductivity_grid,
+        power_grid=power_grid,
+        voxel_size_mm=voxel_size_mm,
+        h_top=h_top,
+        h_side=h_side,
+        h_bottom=h_bottom,
+        active_mask=active_mask
+    )
+
+    simulator = circuit.simulator(
+        temperature=T_ambient,
+        nominal_temperature=T_ambient
+    )
+    analysis = simulator.operating_point()
+
+    nx, ny, nz = conductivity_grid.shape
+    temperature_grid = np.full((nx, ny, nz), T_ambient, dtype=float)
+
+    if active_mask is None:
+        active_mask = np.ones((nx, ny, nz), dtype=bool)
+
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                if not active_mask[i, j, k]:
+                    continue
+
+                node_name = voxel_node(i, j, k)
+                try:
+                    temp_rise = float(analysis[node_name])
+                except Exception:
+                    temp_rise = 0.0
+
+                temperature_grid[i, j, k] = T_ambient + temp_rise
+
+    return temperature_grid, circuit, analysis
 
 
 # ---------------------------------------------------------------------------
