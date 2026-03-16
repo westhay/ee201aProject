@@ -856,6 +856,16 @@ def build_results_dict_per_project_requirements(
         results[box_name] = (t_peak, t_avg, rx, ry, rz)
 
     return results
+
+def write_box_results_report(results: dict, output_path="box_results.txt"):
+    with open(output_path, "w") as f:
+        f.write("Box Results (peak_temp_C, avg_temp_C, R_x, R_y, R_z)\n")
+        f.write("====================================================\n")
+        for name in sorted(results.keys()):
+            peak, avg, rx, ry, rz = results[name]
+            f.write(f"{name}, {peak:.6f}, {avg:.6f}, {rx:.6e}, {ry:.6e}, {rz:.6e}\n")
+
+
 # ---------------------------------------------------------------------------
 # Minimal self-test
 # ---------------------------------------------------------------------------
