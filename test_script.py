@@ -2,7 +2,7 @@
 
 import numpy as np
 import pandas as pd
-from thermal_grid import create_voxel_grid, calculate_voxel_resistances
+from thermal_grid import create_voxel_grid, calculate_voxel_resistances, solve_temperature_grid
 from rearrange import Box
 
 # Conductivity values
@@ -25,12 +25,6 @@ conductivity_values = {
     "TIM0p5": 1.0
 }
 # Create simple test boxes
-boxes = [
-    Box(0, 0, 0, 30, 30, 0.5, 0, 'Si', 0, 'interposer'),
-    Box(2, 0, 0.5, 26, 32, 0.7, 270, 'Si', 0, 'GPU#0'),
-    Box(0, 0, 0.5, 7, 11, 0.7, 5, 'Si', 0, 'HBM#0'),
-    Box(2, 0, 0.48, 26, 32, 0.02, 0, '1:Cu-Foil:70.0,EpAg:30.0', 0, 'bonding'),
-]
 
 def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj, 
                        heatsink_list, heatsink_name, bonding_list,
@@ -86,3 +80,22 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
     print("✓ Created material_distribution.csv")
     print(f"✓ Created voxel_sample.csv ({len(samples)} samples)")
     print("\nDone! Open CSV files to inspect results.")
+
+    temperature_grid, circuit, analysis = solve_temperature_grid(
+        conductivity_grid=grid_info["conductivity_grid"],
+        power_grid=grid_info["power_grid"],
+        voxel_size_mm=grid_info["voxel_size"],
+        T_ambient=25.0,
+        h_top=1000.0,
+        h_side=10.0,
+        h_bottom=100.0,
+        active_mask=grid_info.get("active_mask", None)
+    )
+
+    summary = summarize_temperature_grid(
+        temperature_grid,
+        active_mask=grid_info.get("active_mask", None)
+    )
+
+    print("Temperature summary:")
+    print(summary)
