@@ -114,5 +114,6 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
     box_grid=grid_info["box_grid"],
     active_mask=grid_info.get("active_mask", None),
     )
+    write_box_results_report(results, "box_results.txt")
     return results
     
