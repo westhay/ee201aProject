@@ -2,7 +2,7 @@
 
 import numpy as np
 import pandas as pd
-from thermal_grid import create_voxel_grid, calculate_voxel_resistances, solve_temperature_grid
+from thermal_grid import create_voxel_grid, calculate_voxel_resistances, solve_temperature_grid, summarize_temperature_grid
 from rearrange import Box
 
 # Conductivity values
