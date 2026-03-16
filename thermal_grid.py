@@ -766,7 +766,96 @@ def write_temperature_report(summary, output_path="temperature_summary.txt"):
             )
 
     print(f"✓ Created {output_path}")
+def summarize_temperatures_by_box(
+    temperature_grid: np.ndarray,
+    box_grid: np.ndarray,
+    active_mask: Optional[np.ndarray] = None,
+) -> Dict[str, Tuple[float, float]]:
+    """
+    Returns dict: {box_name: (peak_temp_C, avg_temp_C)}
+    """
+    if active_mask is None:
+        active_mask = np.ones_like(temperature_grid, dtype=bool)
 
+    # Only consider voxels that belong to a named box and are active
+    valid = active_mask & (box_grid != "")
+
+    results: Dict[str, Tuple[float, float]] = {}
+    box_names = np.unique(box_grid[valid])
+
+    for name in box_names:
+        m = valid & (box_grid == name)
+        temps = temperature_grid[m]
+        if temps.size == 0:
+            continue
+        results[str(name)] = (float(np.max(temps)), float(np.mean(temps)))
+
+    return results
+
+
+def summarize_resistances_by_box(
+    resistance_grid: np.ndarray,   # shape (nx,ny,nz,3)
+    box_grid: np.ndarray,
+    active_mask: Optional[np.ndarray] = None,
+    reducer: str = "mean",         # "mean" or "median"
+) -> Dict[str, Tuple[float, float, float]]:
+    """
+    Returns dict: {box_name: (R_x, R_y, R_z)} in K/W.
+
+    NOTE: This is a simple reduction across voxels in the box.
+    """
+    if active_mask is None:
+        active_mask = np.ones(box_grid.shape, dtype=bool)
+
+    valid = active_mask & (box_grid != "")
+
+    if reducer not in ("mean", "median"):
+        raise ValueError("reducer must be 'mean' or 'median'")
+
+    fn = np.mean if reducer == "mean" else np.median
+
+    results: Dict[str, Tuple[float, float, float]] = {}
+    box_names = np.unique(box_grid[valid])
+
+    for name in box_names:
+        m = valid & (box_grid == name)
+        r = resistance_grid[m]  # shape (N,3)
+        if r.size == 0:
+            continue
+        rx, ry, rz = fn(r[:, 0]), fn(r[:, 1]), fn(r[:, 2])
+        results[str(name)] = (float(rx), float(ry), float(rz))
+
+    return results
+
+
+def build_results_dict_per_project_requirements(
+    temperature_grid: np.ndarray,
+    resistance_grid: np.ndarray,
+    box_grid: np.ndarray,
+    active_mask: Optional[np.ndarray] = None,
+) -> Dict[str, Tuple[float, float, float, float, float]]:
+    """
+    Returns:
+        {box_name: (peak_temp_C, avg_temp_C, R_x, R_y, R_z)}
+    """
+    temp_by_box = summarize_temperatures_by_box(
+        temperature_grid=temperature_grid,
+        box_grid=box_grid,
+        active_mask=active_mask,
+    )
+    r_by_box = summarize_resistances_by_box(
+        resistance_grid=resistance_grid,
+        box_grid=box_grid,
+        active_mask=active_mask,
+        reducer="mean",
+    )
+
+    results: Dict[str, Tuple[float, float, float, float, float]] = {}
+    for box_name, (t_peak, t_avg) in temp_by_box.items():
+        rx, ry, rz = r_by_box.get(box_name, (float("nan"), float("nan"), float("nan")))
+        results[box_name] = (t_peak, t_avg, rx, ry, rz)
+
+    return results
 # ---------------------------------------------------------------------------
 # Minimal self-test
 # ---------------------------------------------------------------------------
