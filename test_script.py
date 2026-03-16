@@ -2,7 +2,7 @@
 
 import numpy as np
 import pandas as pd
-from thermal_grid import create_voxel_grid, calculate_voxel_resistances, solve_temperature_grid, summarize_temperature_grid, write_temperature_report
+from thermal_grid import create_voxel_grid, calculate_voxel_resistances, solve_temperature_grid, summarize_temperature_grid, write_temperature_report, build_results_dict_per_project_requirements
 from rearrange import Box
 
 # Conductivity values
@@ -99,7 +99,7 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
         bounds=grid_info["bounds"],
         T_ambient=25.0
     )
-    
+
     print("Temperature summary:")
     print(summary)
     
@@ -107,3 +107,12 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
 
     print("Temperature summary:")
     print(summary)
+
+    results = build_results_dict_per_project_requirements(
+    temperature_grid=temperature_grid,
+    resistance_grid=resistance_grid,
+    box_grid=grid_info["box_grid"],
+    active_mask=grid_info.get("active_mask", None),
+    )
+    return results
+    
