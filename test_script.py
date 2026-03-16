@@ -47,7 +47,7 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
     pd.DataFrame([{
         'nx': nx, 'ny': ny, 'nz': nz,
         'total_voxels': nx*ny*nz,
-        'voxel_size': 0.1,
+        'voxel_size': grid_info["voxel_size"],
         'bounds': str(grid_info['bounds'])
     }]).to_csv('grid_summary.csv', index=False)
     
