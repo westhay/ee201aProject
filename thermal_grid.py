@@ -706,6 +706,28 @@ def solve_temperature_grid(
 
     return temperature_grid, circuit, analysis
 
+def summarize_temperature_grid(temperature_grid, active_mask=None):
+    import numpy as np
+
+    if active_mask is None:
+        active_mask = np.ones_like(temperature_grid, dtype=bool)
+
+    active_temps = temperature_grid[active_mask]
+
+    max_temp = np.max(active_temps)
+    min_temp = np.min(active_temps)
+    avg_temp = np.mean(active_temps)
+
+    max_idx_flat = np.argmax(np.where(active_mask, temperature_grid, -np.inf))
+    max_idx = np.unravel_index(max_idx_flat, temperature_grid.shape)
+
+    return {
+        "max_temp_C": float(max_temp),
+        "min_temp_C": float(min_temp),
+        "avg_temp_C": float(avg_temp),
+        "hottest_voxel_index": max_idx
+    }
+
 
 # ---------------------------------------------------------------------------
 # Minimal self-test
