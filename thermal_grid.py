@@ -708,7 +708,7 @@ def solve_temperature_grid(
 
     return temperature_grid, circuit, analysis
 
-def summarize_temperature_grid(temperature_grid, active_mask=None):
+def summarize_temperature_grid(temperature_grid, active_mask=None, voxel_size_mm=None, bounds=None, T_ambient=25.0):
     import numpy as np
 
     if active_mask is None:
@@ -720,16 +720,52 @@ def summarize_temperature_grid(temperature_grid, active_mask=None):
     min_temp = np.min(active_temps)
     avg_temp = np.mean(active_temps)
 
-    max_idx_flat = np.argmax(np.where(active_mask, temperature_grid, -np.inf))
-    max_idx = np.unravel_index(max_idx_flat, temperature_grid.shape)
+    masked_grid = np.where(active_mask, temperature_grid, -np.inf)
+    max_idx_flat = np.argmax(masked_grid)
+    hottest_idx = np.unravel_index(max_idx_flat, temperature_grid.shape)
 
-    return {
+    summary = {
+        "ambient_temp_C": float(T_ambient),
+        "grid_shape": tuple(int(x) for x in temperature_grid.shape),
+        "active_voxel_count": int(np.sum(active_mask)),
         "max_temp_C": float(max_temp),
         "min_temp_C": float(min_temp),
         "avg_temp_C": float(avg_temp),
-        "hottest_voxel_index": max_idx
+        "hottest_voxel_index": tuple(int(x) for x in hottest_idx),
     }
 
+    if voxel_size_mm is not None and bounds is not None:
+        min_x, max_x, min_y, max_y, min_z, max_z = bounds
+        i, j, k = hottest_idx
+        x_mm = min_x + (i + 0.5) * voxel_size_mm
+        y_mm = min_y + (j + 0.5) * voxel_size_mm
+        z_mm = min_z + (k + 0.5) * voxel_size_mm
+
+        summary["hottest_voxel_center_mm"] = (
+            float(x_mm), float(y_mm), float(z_mm)
+        )
+    return summary
+
+def write_temperature_report(summary, output_path="temperature_summary.txt"):
+    with open(output_path, "w") as f:
+        f.write("Thermal Simulation Summary\n")
+        f.write("==========================\n\n")
+
+        f.write(f"Ambient Temperature (C): {summary['ambient_temp_C']:.3f}\n")
+        f.write(f"Grid Shape: {summary['grid_shape']}\n")
+        f.write(f"Active Voxel Count: {summary['active_voxel_count']}\n\n")
+
+        f.write(f"Maximum Temperature (C): {summary['max_temp_C']:.6f}\n")
+        f.write(f"Minimum Temperature (C): {summary['min_temp_C']:.6f}\n")
+        f.write(f"Average Temperature (C): {summary['avg_temp_C']:.6f}\n")
+        f.write(f"Hottest Voxel Index: {summary['hottest_voxel_index']}\n")
+
+        if 'hottest_voxel_center_mm' in summary:
+            f.write(
+                f"Hottest Voxel Center (mm): {summary['hottest_voxel_center_mm']}\n"
+            )
+
+    print(f"✓ Created {output_path}")
 
 # ---------------------------------------------------------------------------
 # Minimal self-test
