@@ -134,6 +134,7 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
     for mat, count in sorted(zip(unique, counts), key=lambda x: -x[1])[:10]:
         print(f"  - {mat}: {count:,} voxels ({100 * count / total_voxels:.1f}%)")
 
+    active_mask = box_grid != ''
     return {
         'material_grid': material_grid,
         'conductivity_grid': conductivity_grid,
@@ -142,6 +143,7 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
         'bounds': (min_x, max_x, min_y, max_y, min_z, max_z),
         'voxel_size': voxel_size,
         'grid_shape': (nx, ny, nz),
+        'active_mask': active_mask
     }
 
 
