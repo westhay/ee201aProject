@@ -94,8 +94,16 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
 
     summary = summarize_temperature_grid(
         temperature_grid,
-        active_mask=grid_info.get("active_mask", None)
+        active_mask=grid_info.get("active_mask", None),
+        voxel_size_mm=grid_info["voxel_size"],
+        bounds=grid_info["bounds"],
+        T_ambient=25.0
     )
+    
+    print("Temperature summary:")
+    print(summary)
+    
+    write_temperature_report(summary, "temperature_summary.txt")
 
     print("Temperature summary:")
     print(summary)
