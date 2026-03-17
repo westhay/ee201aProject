@@ -22,7 +22,7 @@ conductivity_values = {
     "EpAg": 1.6,
     "Infill_material": 19,
     "Polymer1": 675,
-    "TIM0p5": 1.0
+    "TIM0p5": 5.0
 }
 # Create simple test boxes
 
