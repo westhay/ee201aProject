@@ -189,29 +189,28 @@ def get_box_material(box, layers, conductivity_values):
 
     Handles three cases:
 
-    1. **Bonding layer** – stackup has the form
-       ``"1:Cu-Foil:70.0,Epoxy, Silver filled:30.0"`` where the ratios are
-       percentages (0–100).  The effective conductivity is computed as a
-       weighted average of the two constituent materials.
+    1. Bonding layer:
+       Example: "1:Cu-Foil:70.0,Epoxy, Silver filled:30.0"
+       Effective conductivity is computed as a weighted average of the two
+       constituent materials.
 
-    2. **Layer stackup** – e.g. ``"1:5nm_active,9:5nm_global_metal"``.
-       Each token is ``count:layer_name``.  The first layer whose name is
-       found in *layers* and which has a defined material attribute is used.
-       If that material is itself a composite (``"Cu-Foil:0.5,Si:0.5"``), an
-       effective conductivity is computed.
+    2. Layer stackup:
+       Example: "1:5nm_active,9:5nm_global_metal"
+       Each token is "count:layer_name". We compute an effective conductivity
+       using a thickness-aware SERIES model:
+           k_eff = total_thickness / sum(thickness_i / k_i)
 
-    3. **Direct material name** – the stackup string is looked up directly
-       in *conductivity_values*.
+       where thickness_i includes the token count multiplier.
 
-    Args:
-        box: Box object with a ``stackup`` attribute (and optionally a
-            ``get_box_stackup()`` method).
-        layers: List of Layer objects from XML (may be None).
-        conductivity_values: Dict mapping material names to thermal
-            conductivity in W/m·K.
+    2.5 Single count-prefixed layer/material:
+       Example: "1:TIM0p5" or "1:dummySi_HBM"
+       First try to resolve the RHS as a layer name from XML. If found, use that
+       layer's material. Otherwise treat it as a direct material key.
 
-    Returns:
-        tuple: (material_name: str, conductivity_value: float)
+    3. Direct material name:
+       Example: "Si"
+       The stackup string is looked up directly in conductivity_values.
+       If not found, and it matches a layer name, use that layer's material.
     """
     if conductivity_values is None:
         conductivity_values = {}
@@ -223,14 +222,15 @@ def get_box_material(box, layers, conductivity_values):
     if not stackup:
         return 'Air', conductivity_values.get('Air', 0.025)
 
+    stackup = stackup.strip()
+
     # ------------------------------------------------------------------
     # Case 1: Bonding layer with two-component format
     # Example: "1:Cu-Foil:70.0,Epoxy, Silver filled:30.0"
-    # Detected by: first colon-group contains three colon-separated parts.
     # ------------------------------------------------------------------
     bonding_match = re.match(
         r'^(\d+):(.+?):([0-9.]+),(.+):([0-9.]+)$',
-        stackup.strip()
+        stackup
     )
     if bonding_match:
         try:
@@ -239,14 +239,13 @@ def get_box_material(box, layers, conductivity_values):
             mat2_name = bonding_match.group(4).strip()
             ratio2 = float(bonding_match.group(5))
 
-            # Normalize ratios: therm.py stores them as percentages (0-100)
+            # Normalize percentages if needed
             if ratio1 > 1.0 or ratio2 > 1.0:
                 total = ratio1 + ratio2
                 if total > 0:
                     ratio1 /= total
                     ratio2 /= total
 
-            # Resolve "Epoxy, Silver filled" alias to "EpAg"
             mat1_name = _resolve_material_alias(mat1_name, conductivity_values)
             mat2_name = _resolve_material_alias(mat2_name, conductivity_values)
 
@@ -256,46 +255,122 @@ def get_box_material(box, layers, conductivity_values):
 
             effective_name = f"{mat1_name}_{mat2_name}_eff"
             return effective_name, k_eff
+
         except (ValueError, IndexError) as exc:
             print(f"[Warning] Could not parse bonding stackup '{stackup}': {exc}")
 
     # ------------------------------------------------------------------
     # Case 2: Layer stackup, e.g. "1:5nm_active,9:5nm_global_metal"
-    # Each comma-separated token looks like "count:layer_name".
+    # Compute effective conductivity using thickness-aware SERIES model.
+    # Only return from Case 2 if at least one token resolves to a real layer.
     # ------------------------------------------------------------------
-    if layers and ':' in stackup:
+    if layers and ',' in stackup:
         try:
-            layer_names = parse_stackup_layers(stackup)
-            for layer_name in layer_names:
+            total_thickness = 0.0
+            total_r_per_area = 0.0   # sum(thickness / k)
+            resolved_material_names = []
+
+            for token in stackup.split(','):
+                token = token.strip()
+                if not token:
+                    continue
+
+                count = 1.0
+                layer_name = token
+
+                if ':' in token:
+                    left, right = token.split(':', 1)
+                    layer_name = right.strip()
+                    try:
+                        count = float(left.strip())
+                    except ValueError:
+                        count = 1.0
+
                 layer = find_layer_by_name(layers, layer_name)
-                if layer is not None and hasattr(layer, 'material') and layer.material:
-                    mat_str = layer.material.strip()
-                    k_eff, mat_name = _parse_material_string(
-                        mat_str, conductivity_values
-                    )
-                    return mat_name, k_eff
+                if layer is None or not hasattr(layer, 'material') or not layer.material:
+                    continue
+
+                mat_str = layer.material.strip()
+                k_layer, mat_name = _parse_material_string(mat_str, conductivity_values)
+
+                # Thickness comes from XML; include token count multiplier
+                try:
+                    layer_thickness = float(getattr(layer, 'thickness', 0.0))
+                except (TypeError, ValueError):
+                    layer_thickness = 0.0
+
+                eff_thickness = count * layer_thickness
+
+                # Skip degenerate/non-physical entries safely
+                if eff_thickness <= 0:
+                    continue
+                if k_layer <= 0:
+                    k_layer = 1e-12
+
+                total_thickness += eff_thickness
+                total_r_per_area += eff_thickness / k_layer
+                resolved_material_names.append(mat_name)
+
+            if total_thickness > 0 and total_r_per_area > 0:
+                k_eff = total_thickness / total_r_per_area
+
+                unique_mats = []
+                for name in resolved_material_names:
+                    if name not in unique_mats:
+                        unique_mats.append(name)
+
+                if len(unique_mats) == 1:
+                    effective_name = unique_mats[0]
+                else:
+                    effective_name = "stackup_eff[" + "+".join(unique_mats[:3])
+                    if len(unique_mats) > 3:
+                        effective_name += "+..."
+                    effective_name += "]"
+
+                return effective_name, k_eff
+
         except Exception as exc:
             print(f"[Warning] Could not parse layer stackup '{stackup}': {exc}")
-    
-    # Before Case 3, check if stackup has "count:material" format and extract material
-    if ':' in stackup and not ',' in stackup:
-        # Single material with count prefix: "1:TIM0p5"
+
+    # ------------------------------------------------------------------
+    # Case 2.5: Single count-prefixed layer/material, e.g. "1:TIM0p5"
+    # First try resolving the RHS as a layer name from XML.
+    # ------------------------------------------------------------------
+    if ':' in stackup and ',' not in stackup:
         parts = stackup.split(':', 1)
         if len(parts) == 2 and parts[0].strip().isdigit():
-            material = parts[1].strip()
-            material = _resolve_material_alias(material, conductivity_values)
+            rhs_name = parts[1].strip()
+
+            # First: try XML layer resolution
+            if layers:
+                layer = find_layer_by_name(layers, rhs_name)
+                if layer is not None and hasattr(layer, 'material') and layer.material:
+                    mat_str = layer.material.strip()
+                    k_layer, mat_name = _parse_material_string(mat_str, conductivity_values)
+                    return mat_name, k_layer
+
+            # Second: treat RHS as direct material key
+            material = _resolve_material_alias(rhs_name, conductivity_values)
             k = conductivity_values.get(material, 1.0)
             return material, k
 
-    
     # ------------------------------------------------------------------
-    # Case 3: Direct material name
+    # Case 3: Direct material name.
+    # If not found directly, also try resolving it as an XML layer name.
+    # This fixes strings like "dummySi_HBM" if they appear without count prefix.
     # ------------------------------------------------------------------
-    material = stackup.strip()
-    material = _resolve_material_alias(material, conductivity_values)
-    k = conductivity_values.get(material, 1.0)
-    return material, k
+    material = _resolve_material_alias(stackup, conductivity_values)
+    if material in conductivity_values:
+        return material, conductivity_values.get(material, 1.0)
 
+    if layers:
+        layer = find_layer_by_name(layers, stackup)
+        if layer is not None and hasattr(layer, 'material') and layer.material:
+            mat_str = layer.material.strip()
+            k_layer, mat_name = _parse_material_string(mat_str, conductivity_values)
+            return mat_name, k_layer
+
+    return material, conductivity_values.get(material, 1.0)
 
 def calculate_voxel_resistances(grid_info):
     """
