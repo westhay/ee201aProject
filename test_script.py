@@ -84,7 +84,7 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
     # Extract HTC from parsed heatsink object
     # heatsink_obj["hc"] is in kW/m²K; convert to W/m²K
     if heatsink_obj is not None:
-        h_top = float(heatsink_obj.get("hc", 1.0)) * 1000  # default 1 kW/m²K → 1000 W/m²K
+        h_top = float(heatsink_obj.get("hc", 1000.0))  # default 1 kW/m²K → 1000 W/m²K
     else:
         h_top = 1000.0  # default 1000 W/m²K
     h_side = 10.0
