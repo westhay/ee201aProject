@@ -58,31 +58,27 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
     Boxes are processed bottom-to-top so that higher boxes overwrite lower
     ones where they overlap.
 
+    Power is assigned based on geometric overlap with the box bounds,
+    NOT based on final box ownership in box_grid. This is important because
+    power-source boxes may be overwritten by later structural/material boxes
+    but should still inject heat into the overlapped voxels.
+
     Args:
         boxes: List of Box objects with geometry and material info.
-        voxel_size: Grid resolution in mm (default 0.1 mm = 100 microns).
-        layers: List of Layer objects for material lookup (from
-            layer_definitions.xml via parse_Layer_netlist).
-        conductivity_values: Dict mapping material names to thermal
-            conductivity in W/m·K.
+        voxel_size: Grid resolution in mm.
+        layers: List of Layer objects for material lookup.
+        conductivity_values: Dict mapping material names to thermal conductivity.
 
     Returns:
-        Dictionary with the following keys:
-            'material_grid'    : np.ndarray (nx, ny, nz) dtype=object
-                                 Material names per voxel.
-            'conductivity_grid': np.ndarray (nx, ny, nz) dtype=float
-                                 Thermal conductivity values (W/m·K).
-            'power_grid'       : np.ndarray (nx, ny, nz) dtype=float
-                                 Power density (W/m³).
-            'box_grid'         : np.ndarray (nx, ny, nz) dtype=object
-                                 Box names per voxel.
-            'bounds'           : tuple (min_x, max_x, min_y, max_y,
-                                        min_z, max_z) in mm.
-            'voxel_size'       : float  Grid resolution in mm.
-            'grid_shape'       : tuple  (nx, ny, nz).
-
-    Raises:
-        ValueError: If boxes is empty.
+        Dictionary with:
+            'material_grid'
+            'conductivity_grid'
+            'power_grid'
+            'box_grid'
+            'bounds'
+            'voxel_size'
+            'grid_shape'
+            'active_mask'
     """
     if not boxes:
         raise ValueError("boxes list cannot be empty")
@@ -90,7 +86,9 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
     if conductivity_values is None:
         conductivity_values = {}
 
+    # ---------------------------------------------------------
     # Step 1: Calculate system bounding box
+    # ---------------------------------------------------------
     min_x = min(box.start_x for box in boxes)
     max_x = max(box.end_x for box in boxes)
     min_y = min(box.start_y for box in boxes)
@@ -101,12 +99,13 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
     print(f"[Grid Creation] System bounds: X=[{min_x:.2f}, {max_x:.2f}] "
           f"Y=[{min_y:.2f}, {max_y:.2f}] Z=[{min_z:.2f}, {max_z:.2f}] mm")
 
+    # ---------------------------------------------------------
     # Step 2: Calculate grid dimensions
+    # ---------------------------------------------------------
     nx = int(np.ceil((max_x - min_x) / voxel_size))
     ny = int(np.ceil((max_y - min_y) / voxel_size))
     nz = int(np.ceil((max_z - min_z) / voxel_size))
 
-    # Guard against degenerate dimensions
     nx = max(nx, 1)
     ny = max(ny, 1)
     nz = max(nz, 1)
@@ -115,22 +114,23 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
     print(f"[Grid Creation] Grid shape: ({nx}, {ny}, {nz}) = {total_voxels:,} voxels")
     print(f"[Grid Creation] Voxel size: {voxel_size} mm")
 
+    # ---------------------------------------------------------
     # Step 3: Initialize grids
+    # ---------------------------------------------------------
     air_k = conductivity_values.get('Air', 0.025)
     material_grid = np.full((nx, ny, nz), 'Air', dtype=object)
     conductivity_grid = np.full((nx, ny, nz), air_k, dtype=float)
     power_grid = np.zeros((nx, ny, nz), dtype=float)
     box_grid = np.full((nx, ny, nz), '', dtype=object)
 
-    # Step 4: Fill voxels bottom-to-top so upper boxes overwrite lower ones
+    # ---------------------------------------------------------
+    # Step 4: Assign materials/conductivities first
+    # ---------------------------------------------------------
     sorted_boxes = sorted(boxes, key=lambda b: b.start_z)
 
-    total_power = 0.0
     for box in sorted_boxes:
-        # Determine material name and thermal conductivity for this box
         material, k_value = get_box_material(box, layers, conductivity_values)
-        print(f"[MATDBG] box={box.name} stackup='{box.stackup}' -> material='{material}', k={k_value}")
-        # Calculate voxel index ranges that overlap with this box
+
         i_start = max(0, int((box.start_x - min_x) / voxel_size))
         i_end = min(nx, int(np.ceil((box.end_x - min_x) / voxel_size)))
         j_start = max(0, int((box.start_y - min_y) / voxel_size))
@@ -138,39 +138,75 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
         k_start = max(0, int((box.start_z - min_z) / voxel_size))
         k_end = min(nz, int(np.ceil((box.end_z - min_z) / voxel_size)))
 
-        # Assign material properties to the overlapping voxels
         material_grid[i_start:i_end, j_start:j_end, k_start:k_end] = material
         conductivity_grid[i_start:i_end, j_start:j_end, k_start:k_end] = k_value
         box_grid[i_start:i_end, j_start:j_end, k_start:k_end] = box.name
 
-        # Distribute power density into voxels
-        if box.power > 0:
-            total_power += box.power
-            num_voxels = (i_end - i_start) * (j_end - j_start) * (k_end - k_start)
+    # ---------------------------------------------------------
+    # Step 5: Assign power using GEOMETRIC OVERLAP
+    # ---------------------------------------------------------
+    voxel_volume = (voxel_size * 1e-3) ** 3  # mm^3 -> m^3
+    expected_total_power = 0.0
 
-            if num_voxels > 0:
-                voxel_volume = (voxel_size * 1e-3) ** 3  # convert mm³ to m³
+    for box in sorted_boxes:
+        box_power = getattr(box, 'power', 0.0)
+        if box_power <= 0:
+            continue
 
-                if 'GPU' in box.name.upper():
-                    # Distribute power uniformly in the vertical center plane (z midpoint)
-                    z_center_idx = (k_start + k_end) // 2
-                    num_center_voxels = (i_end - i_start) * (j_end - j_start)
-                    if num_center_voxels > 0:
-                        power_density = box.power / (num_center_voxels * voxel_volume)
-                        power_grid[i_start:i_end, j_start:j_end, z_center_idx] = power_density
-                else:
-                    # Uniform distribution across all voxels of the box
-                    power_density = box.power / (num_voxels * voxel_volume)
-                    power_grid[i_start:i_end, j_start:j_end, k_start:k_end] = power_density
+        expected_total_power += box_power
 
-    # Step 5: Print summary statistics
-    print(f"[Grid Creation] Total power: {total_power:.1f} W")
+        i_start = max(0, int((box.start_x - min_x) / voxel_size))
+        i_end = min(nx, int(np.ceil((box.end_x - min_x) / voxel_size)))
+        j_start = max(0, int((box.start_y - min_y) / voxel_size))
+        j_end = min(ny, int(np.ceil((box.end_y - min_y) / voxel_size)))
+        k_start = max(0, int((box.start_z - min_z) / voxel_size))
+        k_end = min(nz, int(np.ceil((box.end_z - min_z) / voxel_size)))
+
+        assigned_voxels = []
+
+        # Only the true GPU die uses center-plane power injection
+        is_gpu = box.name.endswith(".GPU")
+
+        if is_gpu:
+            if k_end > k_start:
+                z_center_idx = (k_start + k_end) // 2
+                for i in range(i_start, i_end):
+                    for j in range(j_start, j_end):
+                        assigned_voxels.append((i, j, z_center_idx))
+        else:
+            for i in range(i_start, i_end):
+                for j in range(j_start, j_end):
+                    for k in range(k_start, k_end):
+                        assigned_voxels.append((i, j, k))
+
+        num_assigned = len(assigned_voxels)
+
+        if num_assigned == 0:
+            print(f"[Warning] No assigned voxels found for powered box '{box.name}'")
+            continue
+
+        power_density = box_power / (num_assigned * voxel_volume)
+
+        for (i, j, k) in assigned_voxels:
+            power_grid[i, j, k] += power_density
+
+    # ---------------------------------------------------------
+    # Step 6: Print summary statistics
+    # ---------------------------------------------------------
+    print(f"[Grid Creation] Expected total box power: {expected_total_power:.6f} W")
+
+    total_power_from_grid = power_grid.sum() * voxel_volume
+    print(f"[Grid Creation] Total power from grid:   {total_power_from_grid:.6f} W")
+    print(f"[Grid Creation] Power error:             "
+          f"{total_power_from_grid - expected_total_power:.6f} W")
+
     print("[Grid Creation] Material distribution:")
     unique, counts = np.unique(material_grid, return_counts=True)
     for mat, count in sorted(zip(unique, counts), key=lambda x: -x[1])[:10]:
         print(f"  - {mat}: {count:,} voxels ({100 * count / total_voxels:.1f}%)")
 
     active_mask = box_grid != ''
+
     return {
         'material_grid': material_grid,
         'conductivity_grid': conductivity_grid,
@@ -181,7 +217,6 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
         'grid_shape': (nx, ny, nz),
         'active_mask': active_mask
     }
-
 
 def get_box_material(box, layers, conductivity_values):
     """
@@ -640,6 +675,17 @@ def build_thermal_circuit_from_grid(
     -------
     circuit : PySpice Circuit
     """
+    active_voxel_count = 0
+
+    rx_count = 0
+    ry_count = 0
+    rz_count = 0
+    
+    top_bc_count = 0
+    bottom_bc_count = 0
+    side_bc_count = 0
+    total_exposed_faces = 0
+    
     nx, ny, nz = conductivity_grid.shape
 
     if active_mask is None:
@@ -666,6 +712,7 @@ def build_thermal_circuit_from_grid(
                 if not active_mask[i, j, k]:
                     continue
 
+                active_voxel_count += 1
                 n1 = voxel_node(i, j, k)
                 k1 = conductivity_grid[i, j, k]
 
@@ -675,6 +722,7 @@ def build_thermal_circuit_from_grid(
                     R = interface_resistance(k1, k2, d_m, 'x')
                     circuit.R(f"rx_{resistor_count}", n1, voxel_node(i + 1, j, k), R)
                     resistor_count += 1
+                    rx_count += 1
 
                 # +y neighbor
                 if j + 1 < ny and active_mask[i, j + 1, k]:
@@ -682,6 +730,7 @@ def build_thermal_circuit_from_grid(
                     R = interface_resistance(k1, k2, d_m, 'y')
                     circuit.R(f"ry_{resistor_count}", n1, voxel_node(i, j + 1, k), R)
                     resistor_count += 1
+                    ry_count += 1
 
                 # +z neighbor
                 if k + 1 < nz and active_mask[i, j, k + 1]:
@@ -689,6 +738,7 @@ def build_thermal_circuit_from_grid(
                     R = interface_resistance(k1, k2, d_m, 'z')
                     circuit.R(f"rz_{resistor_count}", n1, voxel_node(i, j, k + 1), R)
                     resistor_count += 1
+                    rz_count += 1
 
     # --------------------------------------------------
     # 2) Heat injection current sources
@@ -740,27 +790,39 @@ def build_thermal_circuit_from_grid(
                 if is_exposed(i, j, k + 1) and R_top is not None:
                     circuit.R(f"rtop_{ambient_count}", n, circuit.gnd, R_top)
                     ambient_count += 1
+                    top_bc_count += 1
+                    total_exposed_faces += 1
 
                 # bottom (-z)
                 if is_exposed(i, j, k - 1) and R_bottom is not None:
                     circuit.R(f"rbot_{ambient_count}", n, circuit.gnd, R_bottom)
                     ambient_count += 1
+                    bottom_bc_count += 1
+                    total_exposed_faces += 1
 
                 # x sides
                 if is_exposed(i - 1, j, k) and R_side is not None:
                     circuit.R(f"rxm_{ambient_count}", n, circuit.gnd, R_side)
                     ambient_count += 1
+                    side_bc_count += 1
+                    total_exposed_faces += 1
                 if is_exposed(i + 1, j, k) and R_side is not None:
                     circuit.R(f"rxp_{ambient_count}", n, circuit.gnd, R_side)
                     ambient_count += 1
+                    side_bc_count += 1
+                    total_exposed_faces += 1
 
                 # y sides
                 if is_exposed(i, j - 1, k) and R_side is not None:
                     circuit.R(f"rym_{ambient_count}", n, circuit.gnd, R_side)
                     ambient_count += 1
+                    side_bc_count += 1
+                    total_exposed_faces += 1
                 if is_exposed(i, j + 1, k) and R_side is not None:
                     circuit.R(f"ryp_{ambient_count}", n, circuit.gnd, R_side)
                     ambient_count += 1
+                    side_bc_count += 1
+                    total_exposed_faces += 1
 
     return circuit
 
