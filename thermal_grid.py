@@ -11,7 +11,42 @@ import numpy as np
 from typing import List, Dict, Tuple, Optional, Any
 from PySpice.Spice.Netlist import Circuit
 
+def export_boxes_to_csv(box_list, filename):
+    """
+    Export a list of Box objects to a CSV file.
+    """
 
+    # Define CSV column headers
+    headers = [
+        "name",
+        "start_x", "start_y", "start_z",
+        "width", "length", "height",
+        "end_x", "end_y", "end_z",
+        "power",
+        "stackup"
+    ]
+
+    with open(filename, mode='w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+
+        # Write header
+        writer.writerow(headers)
+
+        # Write each box's attributes
+        for box in box_list:
+            # Safely compute end coordinates if not explicitly stored
+            end_x = box.start_x + box.width
+            end_y = box.start_y + box.length
+            end_z = box.start_z + box.height
+
+            writer.writerow([
+                box.name,
+                box.start_x, box.start_y, box.start_z,
+                box.width, box.length, box.height,
+                end_x, end_y, end_z,
+                box.power,
+                box.stackup
+            ])
 
 def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=None):
     """
