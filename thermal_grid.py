@@ -310,15 +310,15 @@ def get_box_material(box, layers, conductivity_values):
         except Exception as exc:
             print(f"[Warning] Could not parse layer stackup '{stackup}': {exc}")
     
-        # Before Case 3, check if stackup has "count:material" format and extract material
-        if ':' in stackup and not ',' in stackup:
-            # Single material with count prefix: "1:TIM0p5"
-            parts = stackup.split(':', 1)
-            if len(parts) == 2 and parts[0].strip().isdigit():
-                material = parts[1].strip()
-                material = _resolve_material_alias(material, conductivity_values)
-                k = conductivity_values.get(material, 1.0)
-                return material, k
+    # Before Case 3, check if stackup has "count:material" format and extract material
+    if ':' in stackup and not ',' in stackup:
+        # Single material with count prefix: "1:TIM0p5"
+        parts = stackup.split(':', 1)
+        if len(parts) == 2 and parts[0].strip().isdigit():
+            material = parts[1].strip()
+            material = _resolve_material_alias(material, conductivity_values)
+            k = conductivity_values.get(material, 1.0)
+            return material, k
 
     
     # ------------------------------------------------------------------
