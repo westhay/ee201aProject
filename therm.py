@@ -292,6 +292,13 @@ def determine_draw_lim(boxes):
 
     return min_x-5,max_x+5,min_y-5,max_y+5
 
+def recursively_lift_box(chiplet, box_list, height):
+    box = chiplet.get_box_representation()
+    box.start_z = box.start_z + height
+    # print("Lifting box " + box.name + " to z : " + str(box.start_z))
+    for child in chiplet.get_child_chiplets():
+        recursively_lift_box(child, box_list, height)
+    return
 
 def create_power_source_backside(boxes, efficiency = 0.9):
     # ps = Box(x_coord,y_coord,z_coord,width,length,height,power,stackup,0,"Power Source")
