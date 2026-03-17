@@ -36,7 +36,27 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
     print("Creating voxel grid...")
     grid_info = create_voxel_grid(all_boxes, voxel_size=0.5, layers = layers,
                                   conductivity_values=conductivity_values)
+
+    voxel_size_mm = grid_info['voxel_size']
+    voxel_volume_m3 = (voxel_size_mm * 1e-3) ** 3
     
+    power_grid = grid_info['power_grid']
+    total_power_from_grid = power_grid.sum() * voxel_volume_m3
+    expected_total_power = sum(box.power for box in all_boxes if hasattr(box, 'power'))
+    
+    nonzero_power_mask = power_grid > 0
+    
+    print("\n[Power Debug]")
+    print(f"Voxel volume (m^3):      {voxel_volume_m3:.6e}")
+    print(f"Total power from grid:   {total_power_from_grid:.6f} W")
+    print(f"Expected total power:    {expected_total_power:.6f} W")
+    print(f"Power error:             {total_power_from_grid - expected_total_power:.6f} W")
+    print(f"Power voxels:            {nonzero_power_mask.sum()}")
+    
+    if nonzero_power_mask.any():
+        print(f"Max power density:       {power_grid[nonzero_power_mask].max():.6e} W/m^3")
+        print(f"Min power density:       {power_grid[nonzero_power_mask].min():.6e} W/m^3")
+                           
     print("Calculating resistances...")
     resistance_grid = calculate_voxel_resistances(grid_info)
     
