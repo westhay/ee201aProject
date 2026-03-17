@@ -151,7 +151,7 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
             if num_voxels > 0:
                 voxel_volume = (voxel_size * 1e-3) ** 3  # convert mm³ to m³
 
-                if 'GPU' in box.name.upper() or 'HBM' in box.name.upper():
+                if 'GPU' in box.name.upper():
                     # Distribute power uniformly in the vertical center plane (z midpoint)
                     z_center_idx = (k_start + k_end) // 2
                     num_center_voxels = (i_end - i_start) * (j_end - j_start)
