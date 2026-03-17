@@ -829,32 +829,51 @@ def summarize_resistances_by_box(
     return results
 
 
-def build_results_dict_per_project_requirements(
-    temperature_grid: np.ndarray,
-    resistance_grid: np.ndarray,
-    box_grid: np.ndarray,
-    active_mask: Optional[np.ndarray] = None,
-) -> Dict[str, Tuple[float, float, float, float, float]]:
+def summarize_by_box_list(temperature_grid, resistance_grid, all_boxes, grid_info):
     """
-    Returns:
-        {box_name: (peak_temp_C, avg_temp_C, R_x, R_y, R_z)}
+    Instead of using box_grid string matching, iterate over the original
+    all_boxes list and compute voxel index ranges directly from geometry.
+    This guarantees every box in all_boxes gets a row in the output,
+    with the correct .name used as the key.
     """
-    temp_by_box = summarize_temperatures_by_box(
-        temperature_grid=temperature_grid,
-        box_grid=box_grid,
-        active_mask=active_mask,
-    )
-    r_by_box = summarize_resistances_by_box(
-        resistance_grid=resistance_grid,
-        box_grid=box_grid,
-        active_mask=active_mask,
-        reducer="mean",
-    )
+    voxel_size = grid_info['voxel_size']
+    min_x, max_x, min_y, max_y, min_z, max_z = grid_info['bounds']
+    nx, ny, nz = grid_info['grid_shape']
+    active_mask = grid_info.get('active_mask', None)
 
-    results: Dict[str, Tuple[float, float, float, float, float]] = {}
-    for box_name, (t_peak, t_avg) in temp_by_box.items():
-        rx, ry, rz = r_by_box.get(box_name, (float("nan"), float("nan"), float("nan")))
-        results[box_name] = (t_peak, t_avg, rx, ry, rz)
+    results = {}
+    for box in all_boxes:
+        i_start = max(0, int((box.start_x - min_x) / voxel_size))
+        i_end   = min(nx, int(np.ceil((box.end_x   - min_x) / voxel_size)))
+        j_start = max(0, int((box.start_y - min_y) / voxel_size))
+        j_end   = min(ny, int(np.ceil((box.end_y   - min_y) / voxel_size)))
+        k_start = max(0, int((box.start_z - min_z) / voxel_size))
+        k_end   = min(nz, int(np.ceil((box.end_z   - min_z) / voxel_size)))
+
+        if i_end <= i_start or j_end <= j_start or k_end <= k_start:
+            continue  # degenerate box, skip
+
+        t_slice = temperature_grid[i_start:i_end, j_start:j_end, k_start:k_end]
+        r_slice = resistance_grid[i_start:i_end, j_start:j_end, k_start:k_end]  # shape (…,3)
+
+        if active_mask is not None:
+            mask_slice = active_mask[i_start:i_end, j_start:j_end, k_start:k_end]
+            t_vals = t_slice[mask_slice]
+            r_vals = r_slice[mask_slice]  # shape (N, 3)
+        else:
+            t_vals = t_slice.ravel()
+            r_vals = r_slice.reshape(-1, 3)
+
+        if t_vals.size == 0:
+            continue
+
+        t_peak = float(np.max(t_vals))
+        t_avg  = float(np.mean(t_vals))
+        rx = float(np.mean(r_vals[:, 0]))
+        ry = float(np.mean(r_vals[:, 1]))
+        rz = float(np.mean(r_vals[:, 2]))
+
+        results[box.name] = (t_peak, t_avg, rx, ry, rz)
 
     return results
 
