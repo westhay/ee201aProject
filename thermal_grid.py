@@ -129,7 +129,7 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
     for box in sorted_boxes:
         # Determine material name and thermal conductivity for this box
         material, k_value = get_box_material(box, layers, conductivity_values)
-
+        print(f"[MATDBG] box={box.name} stackup='{box.stackup}' -> material='{material}', k={k_value}")
         # Calculate voxel index ranges that overlap with this box
         i_start = max(0, int((box.start_x - min_x) / voxel_size))
         i_end = min(nx, int(np.ceil((box.end_x - min_x) / voxel_size)))
@@ -263,50 +263,17 @@ def get_box_material(box, layers, conductivity_values):
     # Case 2: Layer stackup, e.g. "1:5nm_active,9:5nm_global_metal"
     # Each comma-separated token looks like "count:layer_name".
     # ------------------------------------------------------------------
-    if layers and ',' in stackup:
+    if layers and ':' in stackup:
         try:
-            total_weight = 0.0
-            weighted_k_sum = 0.0
-            material_names = []
-    
-            for token in stackup.split(','):
-                token = token.strip()
-                if not token:
-                    continue
-    
-                weight = 1.0
-                layer_name = token
-    
-                if ':' in token:
-                    left, right = token.split(':', 1)
-                    layer_name = right.strip()
-                    try:
-                        weight = float(left.strip())
-                    except ValueError:
-                        weight = 1.0
-    
+            layer_names = parse_stackup_layers(stackup)
+            for layer_name in layer_names:
                 layer = find_layer_by_name(layers, layer_name)
-                if layer is None or not hasattr(layer, 'material') or not layer.material:
-                    continue
-    
-                mat_str = layer.material.strip()
-                k_layer, mat_name = _parse_material_string(mat_str, conductivity_values)
-    
-                weighted_k_sum += weight * k_layer
-                total_weight += weight
-                material_names.append(mat_name)
-    
-            if total_weight > 0:
-                k_eff = weighted_k_sum / total_weight
-    
-                unique_names = []
-                for name in material_names:
-                    if name not in unique_names:
-                        unique_names.append(name)
-    
-                effective_name = unique_names[0] if len(unique_names) == 1 else "_stackup_eff"
-                return effective_name, k_eff
-    
+                if layer is not None and hasattr(layer, 'material') and layer.material:
+                    mat_str = layer.material.strip()
+                    k_eff, mat_name = _parse_material_string(
+                        mat_str, conductivity_values
+                    )
+                    return mat_name, k_eff
         except Exception as exc:
             print(f"[Warning] Could not parse layer stackup '{stackup}': {exc}")
     
