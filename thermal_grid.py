@@ -305,9 +305,9 @@ def calculate_voxel_resistances(grid_info):
     interface_resistance() used in the circuit builder.  For a cubic voxel
     of side *dx*:
 
-    * R_x = (dx/2) / (k * dy * dz)   (half-voxel; matches interface_resistance())
-    * R_y = (dy/2) / (k * dx * dz)
-    * R_z = (dz/2) / (k * dx * dy)
+    * R_x = dx / (k * dy * dz)  
+    * R_y = dy / (k * dx * dz)
+    * R_z = dz / (k * dx * dy)
 
     Voxels with zero (or negative) conductivity are assigned a very high
     resistance of 1e6 K/W to represent air gaps or unknown materials.
@@ -336,7 +336,7 @@ def calculate_voxel_resistances(grid_info):
     with np.errstate(divide='ignore', invalid='ignore'):
         r_uniform = np.where(
             conductivity_grid > 0,
-            (dx / 2.0) / (conductivity_grid * dy * dz),  # half-voxel: matches interface_resistance()
+            dx / (conductivity_grid * dy * dz),  # half-voxel: matches interface_resistance()
             HIGH_R,
         )
 
