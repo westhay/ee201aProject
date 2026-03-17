@@ -6,6 +6,7 @@ It handles material assignment, effective properties for bonding layers,
 and thermal resistance calculation.
 """
 
+import csv
 import re
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Any
@@ -150,8 +151,8 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
             if num_voxels > 0:
                 voxel_volume = (voxel_size * 1e-3) ** 3  # convert mm³ to m³
 
-                if 'GPU' in box.name.upper():
-                    # Distribute GPU power uniformly in the vertical center plane
+                if 'GPU' in box.name.upper() or 'HBM' in box.name.upper():
+                    # Distribute power uniformly in the vertical center plane (z midpoint)
                     z_center_idx = (k_start + k_end) // 2
                     num_center_voxels = (i_end - i_start) * (j_end - j_start)
                     if num_center_voxels > 0:
@@ -300,11 +301,13 @@ def calculate_voxel_resistances(grid_info):
     """
     Calculate thermal resistances for each voxel in X, Y, Z directions.
 
-    Uses the formula R = L / (k * A).  For a cubic voxel of side *dx*:
+    Uses the half-voxel formula R = (L/2) / (k * A) to match the
+    interface_resistance() used in the circuit builder.  For a cubic voxel
+    of side *dx*:
 
-    * R_x = dx / (k * dy * dz) = 1 / (k * dx)  (heat flow in X direction)
-    * R_y = dy / (k * dx * dz) = 1 / (k * dy)  (heat flow in Y direction)
-    * R_z = dz / (k * dx * dy) = 1 / (k * dz)  (heat flow in Z direction)
+    * R_x = (dx/2) / (k * dy * dz)   (half-voxel; matches interface_resistance())
+    * R_y = (dy/2) / (k * dx * dz)
+    * R_z = (dz/2) / (k * dx * dy)
 
     Voxels with zero (or negative) conductivity are assigned a very high
     resistance of 1e6 K/W to represent air gaps or unknown materials.
@@ -325,15 +328,15 @@ def calculate_voxel_resistances(grid_info):
     # Convert mm to meters for SI units
     dx = dy = dz = voxel_size * 1e-3  # meters
 
-    # Vectorized computation: R = L / (k * A).
-    # For a cubic voxel: R_x = dx / (k * dy * dz) = 1 / (k * dx).
+    # Vectorized computation: R = (L/2) / (k * A).
+    # For a cubic voxel (dx == dy == dz): R_x = (dx/2) / (k * dy * dz).
     # Voxels with k <= 0 (air/unknown) receive a high sentinel resistance.
     HIGH_R = 1e6  # K/W – representative of air or unknown material
 
     with np.errstate(divide='ignore', invalid='ignore'):
         r_uniform = np.where(
             conductivity_grid > 0,
-            dx / (conductivity_grid * dy * dz),
+            (dx / 2.0) / (conductivity_grid * dy * dz),  # half-voxel: matches interface_resistance()
             HIGH_R,
         )
 
@@ -579,65 +582,7 @@ def build_thermal_circuit_from_grid(
     ambient_count = 0
 
     # --------------------------------------------------
-    # 1) Neighbor resistors
-    # Only connect in +x, +y, +z to avoid duplicates
-    # --------------------------------------------------
-    for i in range(nx):
-        for j in range(ny):
-            for k in range(nz):
-                if not active_mask[i, j, k]:
-                    continue
-
-                n1 = voxel_node(i, j, k)
-                k1 = conductivity_grid[i, j, k]
-
-                # +x neighbor
-                if i + 1 < nx and active_mask[i + 1, j, k]:
-                    k2 = conductivity_grid[i + 1, j, k]
-                    R = interface_resistance(k1, k2, d_m, 'x')
-                    circuit.R(f"rx_{resistor_count}", n1, voxel_node(i + 1, j, k), R)
-                    resistor_count += 1
-
-                # +y neighbor
-                if j + 1 < ny and active_mask[i, j + 1, k]:
-                    k2 = conductivity_grid[i, j + 1, k]
-                    R = interface_resistance(k1, k2, d_m, 'y')
-                    circuit.R(f"ry_{resistor_count}", n1, voxel_node(i, j + 1, k), R)
-                    resistor_count += 1
-
-                # +z neighbor
-                if k + 1 < nz and active_mask[i, j, k + 1]:
-                    k2 = conductivity_grid[i, j, k + 1]
-                    R = interface_resistance(k1, k2, d_m, 'z')
-                    circuit.R(f"rz_{resistor_count}", n1, voxel_node(i, j, k + 1), R)
-                    resistor_count += 1
-
-    # --------------------------------------------------
-    # 2) Heat injection current sources
-    #
-    # power_grid is in W/m^3, so voxel power:
-    #   P_voxel = power_density * voxel_volume
-    #
-    # In thermal-electric analogy:
-    #   heat flow -> current
-    # --------------------------------------------------
-    for i in range(nx):
-        for j in range(ny):
-            for k in range(nz):
-                if not active_mask[i, j, k]:
-                    continue
-
-                p_density = power_grid[i, j, k]
-                p_voxel = p_density * voxel_volume_m3
-
-                if abs(p_voxel) > 0:
-                    circuit.I(f"p_{source_count}", circuit.gnd, voxel_node(i, j, k), p_voxel)
-                    source_count += 1
-
-    # --------------------------------------------------
-    # 3) Ambient boundary resistors
-    #
-    # For each exposed face, connect to ground through R = 1/(hA)
+    # Boundary resistance values
     # --------------------------------------------------
     R_top = boundary_resistance(h_top, face_area_m2)
     R_side = boundary_resistance(h_side, face_area_m2)
@@ -652,39 +597,64 @@ def build_thermal_circuit_from_grid(
             return True
         return not active_mask[i2, j2, k2]
 
-    for i in range(nx):
-        for j in range(ny):
-            for k in range(nz):
-                if not active_mask[i, j, k]:
-                    continue
+    # --------------------------------------------------
+    # Single pass over active voxels:
+    # 1) Neighbor resistors (+x, +y, +z only to avoid duplicates)
+    # 2) Heat injection current sources
+    # 3) Ambient boundary resistors
+    # --------------------------------------------------
+    active_indices = np.argwhere(active_mask)  # shape (N_active, 3)
 
-                n = voxel_node(i, j, k)
+    for idx in active_indices:
+        i, j, k = idx
+        n1 = voxel_node(i, j, k)
+        k1 = conductivity_grid[i, j, k]
 
-                # top (+z)
-                if is_exposed(i, j, k + 1) and R_top is not None:
-                    circuit.R(f"rtop_{ambient_count}", n, circuit.gnd, R_top)
-                    ambient_count += 1
+        # --- neighbor resistors (only +x, +y, +z to avoid duplicates) ---
+        if i + 1 < nx and active_mask[i + 1, j, k]:
+            k2 = conductivity_grid[i + 1, j, k]
+            R = interface_resistance(k1, k2, d_m, 'x')
+            circuit.R(f"rx_{resistor_count}", n1, voxel_node(i + 1, j, k), R)
+            resistor_count += 1
 
-                # bottom (-z)
-                if is_exposed(i, j, k - 1) and R_bottom is not None:
-                    circuit.R(f"rbot_{ambient_count}", n, circuit.gnd, R_bottom)
-                    ambient_count += 1
+        if j + 1 < ny and active_mask[i, j + 1, k]:
+            k2 = conductivity_grid[i, j + 1, k]
+            R = interface_resistance(k1, k2, d_m, 'y')
+            circuit.R(f"ry_{resistor_count}", n1, voxel_node(i, j + 1, k), R)
+            resistor_count += 1
 
-                # x sides
-                if is_exposed(i - 1, j, k) and R_side is not None:
-                    circuit.R(f"rxm_{ambient_count}", n, circuit.gnd, R_side)
-                    ambient_count += 1
-                if is_exposed(i + 1, j, k) and R_side is not None:
-                    circuit.R(f"rxp_{ambient_count}", n, circuit.gnd, R_side)
-                    ambient_count += 1
+        if k + 1 < nz and active_mask[i, j, k + 1]:
+            k2 = conductivity_grid[i, j, k + 1]
+            R = interface_resistance(k1, k2, d_m, 'z')
+            circuit.R(f"rz_{resistor_count}", n1, voxel_node(i, j, k + 1), R)
+            resistor_count += 1
 
-                # y sides
-                if is_exposed(i, j - 1, k) and R_side is not None:
-                    circuit.R(f"rym_{ambient_count}", n, circuit.gnd, R_side)
-                    ambient_count += 1
-                if is_exposed(i, j + 1, k) and R_side is not None:
-                    circuit.R(f"ryp_{ambient_count}", n, circuit.gnd, R_side)
-                    ambient_count += 1
+        # --- heat source ---
+        p_density = power_grid[i, j, k]
+        p_voxel = p_density * voxel_volume_m3
+        if abs(p_voxel) > 0:
+            circuit.I(f"p_{source_count}", circuit.gnd, n1, p_voxel)
+            source_count += 1
+
+        # --- boundary resistors ---
+        if is_exposed(i, j, k + 1) and R_top is not None:
+            circuit.R(f"rtop_{ambient_count}", n1, circuit.gnd, R_top)
+            ambient_count += 1
+        if is_exposed(i, j, k - 1) and R_bottom is not None:
+            circuit.R(f"rbot_{ambient_count}", n1, circuit.gnd, R_bottom)
+            ambient_count += 1
+        if is_exposed(i - 1, j, k) and R_side is not None:
+            circuit.R(f"rxm_{ambient_count}", n1, circuit.gnd, R_side)
+            ambient_count += 1
+        if is_exposed(i + 1, j, k) and R_side is not None:
+            circuit.R(f"rxp_{ambient_count}", n1, circuit.gnd, R_side)
+            ambient_count += 1
+        if is_exposed(i, j - 1, k) and R_side is not None:
+            circuit.R(f"rym_{ambient_count}", n1, circuit.gnd, R_side)
+            ambient_count += 1
+        if is_exposed(i, j + 1, k) and R_side is not None:
+            circuit.R(f"ryp_{ambient_count}", n1, circuit.gnd, R_side)
+            ambient_count += 1
 
     return circuit
 
@@ -727,19 +697,15 @@ def solve_temperature_grid(
     if active_mask is None:
         active_mask = np.ones((nx, ny, nz), dtype=bool)
 
-    for i in range(nx):
-        for j in range(ny):
-            for k in range(nz):
-                if not active_mask[i, j, k]:
-                    continue
-
-                node_name = voxel_node(i, j, k)
-                try:
-                    temp_rise = float(analysis[node_name])
-                except Exception:
-                    temp_rise = 0.0
-
-                temperature_grid[i, j, k] = T_ambient + temp_rise
+    active_indices = np.argwhere(active_mask)
+    for idx in active_indices:
+        i, j, k = idx
+        node_name = voxel_node(i, j, k)
+        try:
+            temp_rise = float(analysis[node_name])
+        except Exception:
+            temp_rise = 0.0
+        temperature_grid[i, j, k] = T_ambient + temp_rise
 
     return temperature_grid, circuit, analysis
 

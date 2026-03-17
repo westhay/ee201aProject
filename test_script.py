@@ -81,14 +81,23 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
     print(f"✓ Created voxel_sample.csv ({len(samples)} samples)")
     print("\nDone! Open CSV files to inspect results.")
 
+    # Extract HTC from parsed heatsink object
+    # heatsink_obj["hc"] is in kW/m²K; convert to W/m²K
+    if heatsink_obj is not None:
+        h_top = float(heatsink_obj.get("hc", 1.0)) * 1000  # default 1 kW/m²K → 1000 W/m²K
+    else:
+        h_top = 1000.0  # default 1000 W/m²K
+    h_side = 10.0
+    h_bottom = 100.0
+
     temperature_grid, circuit, analysis = solve_temperature_grid(
         conductivity_grid=grid_info["conductivity_grid"],
         power_grid=grid_info["power_grid"],
         voxel_size_mm=grid_info["voxel_size"],
-        T_ambient=25.0,
-        h_top=1000.0,
-        h_side=10.0,
-        h_bottom=100.0,
+        T_ambient=45.0,
+        h_top=h_top,
+        h_side=h_side,
+        h_bottom=h_bottom,
         active_mask=grid_info.get("active_mask", None)
     )
 
@@ -97,7 +106,7 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
         active_mask=grid_info.get("active_mask", None),
         voxel_size_mm=grid_info["voxel_size"],
         bounds=grid_info["bounds"],
-        T_ambient=25.0
+        T_ambient=45.0
     )
 
     print("Temperature summary:")
