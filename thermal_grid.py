@@ -301,7 +301,7 @@ def calculate_voxel_resistances(grid_info):
     """
     Calculate thermal resistances for each voxel in X, Y, Z directions.
 
-    Uses the half-voxel formula R = (L/2) / (k * A) to match the
+    Uses the voxel formula R = L / (k * A) to match the
     interface_resistance() used in the circuit builder.  For a cubic voxel
     of side *dx*:
 
