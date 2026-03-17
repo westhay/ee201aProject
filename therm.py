@@ -36,6 +36,7 @@ from typing import List, Tuple
 import csv
 
 from test_script import simulator_simulate
+from thermal_grid import export_boxes_to_csv
 
 sns.set()
 
@@ -1650,6 +1651,10 @@ def therm(therm_conf, heatsink_conf, bonding_conf, heatsink, out_dir, project_na
     # print("Power dict initialized: ", power_dict)
 
     if(is_repeat == False):
+
+        all_boxes = boxes + bonding_box_list + TIM_boxes
+        export_boxes_to_csv(all_boxes, os.path.join(out_dir, "boxes.csv"))
+        
         simulation_start_time = time.time()
         print("Starting simulation at ", simulation_start_time)
         
