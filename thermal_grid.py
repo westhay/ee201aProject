@@ -680,13 +680,13 @@ def build_thermal_circuit_from_grid(
     R_bottom = boundary_resistance(h_bottom, face_area_m2)
 
     def is_exposed(i2, j2, k2):
-        # Only true outer-domain faces are exposed to ambient.
-        # Inactive neighbors inside the simulation box are NOT ambient.
-        return (
-            i2 < 0 or i2 >= nx or
-            j2 < 0 or j2 >= ny or
-            k2 < 0 or k2 >= nz
-        )
+        if i2 < 0 or i2 >= nx:
+            return True
+        if j2 < 0 or j2 >= ny:
+            return True
+        if k2 < 0 or k2 >= nz:
+            return True
+        return not active_mask[i2, j2, k2]
 
     for i in range(nx):
         for j in range(ny):
