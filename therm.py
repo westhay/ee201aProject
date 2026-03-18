@@ -683,6 +683,7 @@ def find_deepest_node(chiplet_tree):
 @click.option('--infill_cond_list', default = [1.6], multiple = True, help='The infill conductivity list')
 @click.option('--underfill_cond_list', default = [1.6], multiple = True, help='The underfill conductivity list')
 def therm(therm_conf, heatsink_conf, bonding_conf, heatsink, out_dir, project_name, simtype = "Anemoi", is_repeat = False, hbm_stack_height = 1, system_type = "2p5D", dummy_si = False, tim_cond_list = (5, 10, 50), infill_cond_list = (1.6, 19), underfill_cond_list = (1.6, 19)):
+    os.makedirs(out_dir, exist_ok=True)
 
     chiplet_tree = parse_all_chiplets(therm_conf)
     (w_top, l_top) = recursive_chiplet_sizing(chiplet_tree[0], None)
