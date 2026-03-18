@@ -1,4 +1,3 @@
-"""Quick test for thermal_grid.py - Save as test_thermal_grid.py"""
 import csv
 import re
 import numpy as np
@@ -69,33 +68,6 @@ def export_boxes_to_csv(box_list, filename):
 def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=None):
     """
     Create a 3D voxel grid from boxes and assign materials.
-
-    Divides the system bounding box into uniform cubic voxels and assigns
-    material, conductivity, power density, and box name to each voxel.
-    Boxes are processed bottom-to-top so that higher boxes overwrite lower
-    ones where they overlap.
-
-    Power is assigned based on geometric overlap with the box bounds,
-    NOT based on final box ownership in box_grid. This is important because
-    power-source boxes may be overwritten by later structural/material boxes
-    but should still inject heat into the overlapped voxels.
-
-    Args:
-        boxes: List of Box objects with geometry and material info.
-        voxel_size: Grid resolution in mm.
-        layers: List of Layer objects for material lookup.
-        conductivity_values: Dict mapping material names to thermal conductivity.
-
-    Returns:
-        Dictionary with:
-            'material_grid'
-            'conductivity_grid'
-            'power_grid'
-            'box_grid'
-            'bounds'
-            'voxel_size'
-            'grid_shape'
-            'active_mask'
     """
     if not boxes:
         raise ValueError("boxes list cannot be empty")
@@ -428,24 +400,6 @@ def get_box_material(box, layers, conductivity_values):
 def calculate_voxel_resistances(grid_info):
     """
     Calculate thermal resistances for each voxel in X, Y, Z directions.
-
-    Uses the voxel formula R = L / (k * A) to match the
-    interface_resistance() used in the circuit builder.  For a cubic voxel
-    of side *dx*:
-
-    * R_x = dx / (k * dy * dz)  
-    * R_y = dy / (k * dx * dz)
-    * R_z = dz / (k * dx * dy)
-
-    Voxels with zero (or negative) conductivity are assigned a very high
-    resistance of 1e6 K/W to represent air gaps or unknown materials.
-
-    Args:
-        grid_info: Dictionary returned by :func:`create_voxel_grid`.
-
-    Returns:
-        np.ndarray: Shape (nx, ny, nz, 3) where the last axis contains
-        [R_x, R_y, R_z] in K/W for each voxel.
     """
     conductivity_grid = grid_info['conductivity_grid']
     voxel_size = grid_info['voxel_size']
@@ -520,13 +474,6 @@ def parse_stackup_layers(stackup_string):
 def find_layer_by_name(layers, layer_name):
     """
     Find a Layer object by its name attribute.
-
-    Args:
-        layers: List of Layer objects (each must have a ``name`` attribute).
-        layer_name: str  Name to search for.
-
-    Returns:
-        Layer object if found, otherwise ``None``.
     """
     if not layers:
         return None
@@ -542,19 +489,7 @@ def find_layer_by_name(layers, layer_name):
 
 def _resolve_material_alias(material_name, conductivity_values):
     """
-    Translate known material aliases to the canonical name used in
-    *conductivity_values*.
-
-    For example, ``"Epoxy, Silver filled"`` is stored as ``"EpAg"`` in the
-    conductivity dict.  If the raw name is already present in the dict, it
-    is returned unchanged.
-
-    Args:
-        material_name: str  Raw material name from the stackup or XML.
-        conductivity_values: Dict mapping canonical names to conductivity.
-
-    Returns:
-        str: Resolved material name.
+    Translate known material aliases to the canonical name used in *conductivity_values*.
     """
     # Already a known material – no translation needed
     if material_name in conductivity_values:
@@ -572,16 +507,6 @@ def _resolve_material_alias(material_name, conductivity_values):
 def _parse_material_string(material_str, conductivity_values):
     """
     Parse a material string that may be a single material or a composite.
-
-    Composite format (as seen in layer_definitions.xml):
-    ``"Cu-Foil:0.5,Si:0.5"`` where ratios are in the range [0, 1].
-
-    Args:
-        material_str: str  Raw material string from a Layer object.
-        conductivity_values: Dict mapping material names to conductivity.
-
-    Returns:
-        tuple: (effective_conductivity: float, material_name: str)
     """
     if ':' not in material_str:
         # Single material
@@ -623,16 +548,7 @@ def voxel_node(i, j, k):
     return f"n_{i}_{j}_{k}"
 
 
-# ---------------------------------------------------------
-# Helper: thermal resistance between two neighboring voxels
-# direction is one of 'x', 'y', 'z'
-#
-# Uses center-to-center resistance:
-#   R = (L1 / (k1*A)) + (L2 / (k2*A))
-#
-# For equal cubic voxels:
-#   L1 = L2 = d/2
-# ---------------------------------------------------------
+
 def interface_resistance(k1, k2, d_m, direction):
     if k1 <= 0:
         k1 = 1e-12
@@ -651,11 +567,6 @@ def interface_resistance(k1, k2, d_m, direction):
     return (d_m / 2.0) / (k1 * area) + (d_m / 2.0) / (k2 * area)
 
 
-# ---------------------------------------------------------
-# Optional helper: convection / ambient resistance
-# R = 1 / (h*A)
-# h in W/(m^2*K)
-# ---------------------------------------------------------
 def boundary_resistance(h, area_m2):
     if h is None or h <= 0:
         return None
