@@ -35,8 +35,8 @@ from pathlib import Path
 from typing import List, Tuple
 import csv
 
-from test_script import simulator_simulate
-from thermal_grid import export_boxes_to_csv
+from project import simulator_simulate
+#from thermal_grid import export_boxes_to_csv
 
 sns.set()
 
