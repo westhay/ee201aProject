@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 from typing import List, Dict, Tuple, Optional, Any
 from PySpice.Spice.Netlist import Circuit
-#from thermal_grid import create_voxel_grid, calculate_voxel_resistances, solve_temperature_grid, summarize_temperature_grid, write_temperature_report, summarize_by_box_list, write_box_results_report
 from rearrange import Box
 
 # Conductivity values
@@ -74,10 +73,7 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
 
     if conductivity_values is None:
         conductivity_values = {}
-
-    # ---------------------------------------------------------
-    # Step 1: Calculate system bounding box
-    # ---------------------------------------------------------
+        
     min_x = min(box.start_x for box in boxes)
     max_x = max(box.end_x for box in boxes)
     min_y = min(box.start_y for box in boxes)
@@ -85,12 +81,10 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
     min_z = min(box.start_z for box in boxes)
     max_z = max(box.end_z for box in boxes)
 
+    """
     print(f"[Grid Creation] System bounds: X=[{min_x:.2f}, {max_x:.2f}] "
           f"Y=[{min_y:.2f}, {max_y:.2f}] Z=[{min_z:.2f}, {max_z:.2f}] mm")
-
-    # ---------------------------------------------------------
-    # Step 2: Calculate grid dimensions
-    # ---------------------------------------------------------
+    """
     nx = int(np.ceil((max_x - min_x) / voxel_size))
     ny = int(np.ceil((max_y - min_y) / voxel_size))
     nz = int(np.ceil((max_z - min_z) / voxel_size))
@@ -100,21 +94,15 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
     nz = max(nz, 1)
 
     total_voxels = nx * ny * nz
-    print(f"[Grid Creation] Grid shape: ({nx}, {ny}, {nz}) = {total_voxels:,} voxels")
-    print(f"[Grid Creation] Voxel size: {voxel_size} mm")
+    #print(f"[Grid Creation] Grid shape: ({nx}, {ny}, {nz}) = {total_voxels:,} voxels")
+    #print(f"[Grid Creation] Voxel size: {voxel_size} mm")
 
-    # ---------------------------------------------------------
-    # Step 3: Initialize grids
-    # ---------------------------------------------------------
     air_k = conductivity_values.get('Air', 0.025)
     material_grid = np.full((nx, ny, nz), 'Air', dtype=object)
     conductivity_grid = np.full((nx, ny, nz), air_k, dtype=float)
     power_grid = np.zeros((nx, ny, nz), dtype=float)
     box_grid = np.full((nx, ny, nz), '', dtype=object)
 
-    # ---------------------------------------------------------
-    # Step 4: Assign materials/conductivities first
-    # ---------------------------------------------------------
     sorted_boxes = sorted(boxes, key=lambda b: b.start_z)
 
     for box in sorted_boxes:
@@ -132,9 +120,6 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
         conductivity_grid[i_start:i_end, j_start:j_end, k_start:k_end] = k_value
         box_grid[i_start:i_end, j_start:j_end, k_start:k_end] = box.name
 
-    # ---------------------------------------------------------
-    # Step 5: Assign power using GEOMETRIC OVERLAP
-    # ---------------------------------------------------------
     voxel_volume = (voxel_size * 1e-3) ** 3  # mm^3 -> m^3
     expected_total_power = 0.0
 
@@ -156,8 +141,9 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
 
         # Only the true GPU die uses center-plane power injection
         is_gpu = box.name.endswith(".GPU")
+        is_HMB = box.name.endswith(".HBM")
 
-        if is_gpu:
+        if is_gpu or is_HBM:
             if k_end > k_start:
                 z_center_idx = (k_start + k_end) // 2
                 for i in range(i_start, i_end):
@@ -180,20 +166,18 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
         for (i, j, k) in assigned_voxels:
             power_grid[i, j, k] += power_density
 
-    # ---------------------------------------------------------
-    # Step 6: Print summary statistics
-    # ---------------------------------------------------------
-    print(f"[Grid Creation] Expected total box power: {expected_total_power:.6f} W")
+   
+    #print(f"[Grid Creation] Expected total box power: {expected_total_power:.6f} W")
 
     total_power_from_grid = power_grid.sum() * voxel_volume
-    print(f"[Grid Creation] Total power from grid:   {total_power_from_grid:.6f} W")
-    print(f"[Grid Creation] Power error:             "
-          f"{total_power_from_grid - expected_total_power:.6f} W")
+    #print(f"[Grid Creation] Total power from grid:   {total_power_from_grid:.6f} W")
+    #print(f"[Grid Creation] Power error:             "
+    #      f"{total_power_from_grid - expected_total_power:.6f} W")
 
-    print("[Grid Creation] Material distribution:")
+    #print("[Grid Creation] Material distribution:")
     unique, counts = np.unique(material_grid, return_counts=True)
-    for mat, count in sorted(zip(unique, counts), key=lambda x: -x[1])[:10]:
-        print(f"  - {mat}: {count:,} voxels ({100 * count / total_voxels:.1f}%)")
+    #for mat, count in sorted(zip(unique, counts), key=lambda x: -x[1])[:10]:
+    #    print(f"  - {mat}: {count:,} voxels ({100 * count / total_voxels:.1f}%)")
 
     active_mask = box_grid != ''
 
@@ -211,31 +195,6 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
 def get_box_material(box, layers, conductivity_values):
     """
     Get material name and thermal conductivity from a Box.
-
-    Handles three cases:
-
-    1. Bonding layer:
-       Example: "1:Cu-Foil:70.0,Epoxy, Silver filled:30.0"
-       Effective conductivity is computed as a weighted average of the two
-       constituent materials.
-
-    2. Layer stackup:
-       Example: "1:5nm_active,9:5nm_global_metal"
-       Each token is "count:layer_name". We compute an effective conductivity
-       using a thickness-aware SERIES model:
-           k_eff = total_thickness / sum(thickness_i / k_i)
-
-       where thickness_i includes the token count multiplier.
-
-    2.5 Single count-prefixed layer/material:
-       Example: "1:TIM0p5" or "1:dummySi_HBM"
-       First try to resolve the RHS as a layer name from XML. If found, use that
-       layer's material. Otherwise treat it as a direct material key.
-
-    3. Direct material name:
-       Example: "Si"
-       The stackup string is looked up directly in conductivity_values.
-       If not found, and it matches a layer name, use that layer's material.
     """
     if conductivity_values is None:
         conductivity_values = {}
@@ -249,10 +208,7 @@ def get_box_material(box, layers, conductivity_values):
 
     stackup = stackup.strip()
 
-    # ------------------------------------------------------------------
-    # Case 1: Bonding layer with two-component format
-    # Example: "1:Cu-Foil:70.0,Epoxy, Silver filled:30.0"
-    # ------------------------------------------------------------------
+    #Case 1
     bonding_match = re.match(
         r'^(\d+):(.+?):([0-9.]+),(.+):([0-9.]+)$',
         stackup
@@ -284,11 +240,7 @@ def get_box_material(box, layers, conductivity_values):
         except (ValueError, IndexError) as exc:
             print(f"[Warning] Could not parse bonding stackup '{stackup}': {exc}")
 
-    # ------------------------------------------------------------------
-    # Case 2: Layer stackup, e.g. "1:5nm_active,9:5nm_global_metal"
-    # Compute effective conductivity using thickness-aware SERIES model.
-    # Only return from Case 2 if at least one token resolves to a real layer.
-    # ------------------------------------------------------------------
+    #Case 2
     if layers and ',' in stackup:
         try:
             total_thickness = 0.0
@@ -318,7 +270,6 @@ def get_box_material(box, layers, conductivity_values):
                 mat_str = layer.material.strip()
                 k_layer, mat_name = _parse_material_string(mat_str, conductivity_values)
 
-                # Thickness comes from XML; include token count multiplier
                 try:
                     layer_thickness = float(getattr(layer, 'thickness', 0.0))
                 except (TypeError, ValueError):
@@ -326,7 +277,6 @@ def get_box_material(box, layers, conductivity_values):
 
                 eff_thickness = count * layer_thickness
 
-                # Skip degenerate/non-physical entries safely
                 if eff_thickness <= 0:
                     continue
                 if k_layer <= 0:
@@ -357,16 +307,11 @@ def get_box_material(box, layers, conductivity_values):
         except Exception as exc:
             print(f"[Warning] Could not parse layer stackup '{stackup}': {exc}")
 
-    # ------------------------------------------------------------------
-    # Case 2.5: Single count-prefixed layer/material, e.g. "1:TIM0p5"
-    # First try resolving the RHS as a layer name from XML.
-    # ------------------------------------------------------------------
     if ':' in stackup and ',' not in stackup:
         parts = stackup.split(':', 1)
         if len(parts) == 2 and parts[0].strip().isdigit():
             rhs_name = parts[1].strip()
 
-            # First: try XML layer resolution
             if layers:
                 layer = find_layer_by_name(layers, rhs_name)
                 if layer is not None and hasattr(layer, 'material') and layer.material:
@@ -374,16 +319,11 @@ def get_box_material(box, layers, conductivity_values):
                     k_layer, mat_name = _parse_material_string(mat_str, conductivity_values)
                     return mat_name, k_layer
 
-            # Second: treat RHS as direct material key
             material = _resolve_material_alias(rhs_name, conductivity_values)
             k = conductivity_values.get(material, 1.0)
             return material, k
 
-    # ------------------------------------------------------------------
-    # Case 3: Direct material name.
-    # If not found directly, also try resolving it as an XML layer name.
-    # This fixes strings like "dummySi_HBM" if they appear without count prefix.
-    # ------------------------------------------------------------------
+    #case 3
     material = _resolve_material_alias(stackup, conductivity_values)
     if material in conductivity_values:
         return material, conductivity_values.get(material, 1.0)
@@ -405,25 +345,19 @@ def calculate_voxel_resistances(grid_info):
     voxel_size = grid_info['voxel_size']
     nx, ny, nz = grid_info['grid_shape']
 
-    print("[Resistance Calculation] Computing thermal resistances...")
+    #print("[Resistance Calculation] Computing thermal resistances...")
 
-    # Convert mm to meters for SI units
     dx = dy = dz = voxel_size * 1e-3  # meters
 
-    # Vectorized computation: R = (L/2) / (k * A).
-    # For a cubic voxel (dx == dy == dz): R_x = (dx/2) / (k * dy * dz).
-    # Voxels with k <= 0 (air/unknown) receive a high sentinel resistance.
     HIGH_R = 1e6  # K/W – representative of air or unknown material
 
     with np.errstate(divide='ignore', invalid='ignore'):
         r_uniform = np.where(
             conductivity_grid > 0,
-            dx / (conductivity_grid * dy * dz),  # half-voxel: matches interface_resistance()
+            dx / (conductivity_grid * dy * dz),  
             HIGH_R,
         )
 
-    # Stack into (nx, ny, nz, 3) array.  All three directions are equal for
-    # cubic voxels (dx == dy == dz), so all axes share the same array.
     resistance_grid = np.stack([r_uniform, r_uniform, r_uniform], axis=-1)
 
     # Print summary statistics for non-air voxels
@@ -432,32 +366,19 @@ def calculate_voxel_resistances(grid_info):
         R_x_avg = np.mean(resistance_grid[:, :, :, 0][valid_mask])
         R_y_avg = np.mean(resistance_grid[:, :, :, 1][valid_mask])
         R_z_avg = np.mean(resistance_grid[:, :, :, 2][valid_mask])
-
+        """
         print("[Resistance Calculation] Average resistances (K/W):")
         print(f"  R_x: {R_x_avg:.6e}")
         print(f"  R_y: {R_y_avg:.6e}")
         print(f"  R_z: {R_z_avg:.6e}")
-
+        """
     return resistance_grid
 
 
-# ---------------------------------------------------------------------------
-# Helper functions
-# ---------------------------------------------------------------------------
 
 def parse_stackup_layers(stackup_string):
     """
-    Parse a layer stackup string of the form ``"1:5nm_active,9:5nm_global_metal"``.
-
-    Each comma-separated token is expected to be either:
-    * ``"count:layer_name"`` – the layer name after the colon is returned, or
-    * ``"layer_name"``       – returned as-is.
-
-    Args:
-        stackup_string: str  Stackup specification string.
-
-    Returns:
-        list[str]: Layer names (e.g. ``['5nm_active', '5nm_global_metal']``).
+    Parse a layer stackup string
     """
     layer_names = []
     for part in stackup_string.split(','):
@@ -483,19 +404,12 @@ def find_layer_by_name(layers, layer_name):
     return None
 
 
-# ---------------------------------------------------------------------------
-# Private helpers
-# ---------------------------------------------------------------------------
 
 def _resolve_material_alias(material_name, conductivity_values):
-    """
-    Translate known material aliases to the canonical name used in *conductivity_values*.
-    """
-    # Already a known material – no translation needed
+
     if material_name in conductivity_values:
         return material_name
 
-    # Known aliases
     _aliases = {
         'Epoxy, Silver filled': 'EpAg',
         'epoxy, silver filled': 'EpAg',
@@ -513,7 +427,6 @@ def _parse_material_string(material_str, conductivity_values):
         mat = _resolve_material_alias(material_str.strip(), conductivity_values)
         return conductivity_values.get(mat, 1.0), mat
 
-    # Composite material: "Mat1:ratio1,Mat2:ratio2"
     try:
         parts = material_str.split(',')
         if len(parts) == 2:
@@ -536,17 +449,12 @@ def _parse_material_string(material_str, conductivity_values):
     except (ValueError, IndexError):
         pass
 
-    # Fallback: treat the whole string as a material name
     mat = _resolve_material_alias(material_str.strip(), conductivity_values)
     return conductivity_values.get(mat, 1.0), mat
 
 
-# ---------------------------------------------------------
-# Helper: unique node name for each voxel
-# ---------------------------------------------------------
 def voxel_node(i, j, k):
     return f"n_{i}_{j}_{k}"
-
 
 
 def interface_resistance(k1, k2, d_m, direction):
@@ -585,25 +493,7 @@ def build_thermal_circuit_from_grid(
     h_bottom=100.0,
     active_mask=None
 ):
-    """
-    Parameters
-    ----------
-    conductivity_grid : np.ndarray, shape (nx, ny, nz)
-        Thermal conductivity in W/(m*K)
-    power_grid : np.ndarray, shape (nx, ny, nz)
-        Power density in W/m^3
-    voxel_size_mm : float
-        Cubic voxel edge length in mm
-    h_top, h_side, h_bottom : float or None
-        Ambient boundary coefficients in W/(m^2*K)
-    active_mask : np.ndarray of bool, optional
-        If provided, only active voxels are connected/simulated.
-        If None, all voxels are included.
 
-    Returns
-    -------
-    circuit : PySpice Circuit
-    """
     active_voxel_count = 0
 
     rx_count = 0
@@ -631,10 +521,7 @@ def build_thermal_circuit_from_grid(
     source_count = 0
     ambient_count = 0
 
-    # --------------------------------------------------
-    # 1) Neighbor resistors
-    # Only connect in +x, +y, +z to avoid duplicates
-    # --------------------------------------------------
+
     for i in range(nx):
         for j in range(ny):
             for k in range(nz):
@@ -669,15 +556,6 @@ def build_thermal_circuit_from_grid(
                     resistor_count += 1
                     rz_count += 1
 
-    # --------------------------------------------------
-    # 2) Heat injection current sources
-    #
-    # power_grid is in W/m^3, so voxel power:
-    #   P_voxel = power_density * voxel_volume
-    #
-    # In thermal-electric analogy:
-    #   heat flow -> current
-    # --------------------------------------------------
     for i in range(nx):
         for j in range(ny):
             for k in range(nz):
@@ -691,11 +569,7 @@ def build_thermal_circuit_from_grid(
                     circuit.I(f"p_{source_count}", circuit.gnd, voxel_node(i, j, k), p_voxel)
                     source_count += 1
 
-    # --------------------------------------------------
-    # 3) Ambient boundary resistors
-    #
-    # For each exposed face, connect to ground through R = 1/(hA)
-    # --------------------------------------------------
+
     R_top = boundary_resistance(h_top, face_area_m2)
     R_side = boundary_resistance(h_side, face_area_m2)
     R_bottom = boundary_resistance(h_bottom, face_area_m2)
@@ -768,9 +642,6 @@ def build_thermal_circuit_from_grid(
     return circuit
 
 
-# ---------------------------------------------------------
-# Solve temperature map
-# ---------------------------------------------------------
 def solve_temperature_grid(
     conductivity_grid,
     power_grid,
@@ -879,12 +750,6 @@ def write_temperature_report(summary, output_path="temperature_summary.txt"):
 
 
 def summarize_by_box_list(temperature_grid, resistance_grid, all_boxes, grid_info):
-    """
-    Instead of using box_grid string matching, iterate over the original
-    all_boxes list and compute voxel index ranges directly from geometry.
-    This guarantees every box in all_boxes gets a row in the output,
-    with the correct .name used as the key.
-    """
     voxel_size = grid_info['voxel_size']
     min_x, max_x, min_y, max_y, min_z, max_z = grid_info['bounds']
     nx, ny, nz = grid_info['grid_shape']
@@ -955,7 +820,7 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
     expected_total_power = sum(box.power for box in all_boxes if hasattr(box, 'power'))
     
     nonzero_power_mask = power_grid > 0
-    
+    """
     print("\n[Power Debug]")
     print(f"Voxel volume (m^3):      {voxel_volume_m3:.6e}")
     print(f"Total power from grid:   {total_power_from_grid:.6f} W")
@@ -970,8 +835,7 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
     print("Calculating resistances...")
     resistance_grid = calculate_voxel_resistances(grid_info)
     
-    print("\nExporting to CSV...")
-    
+    """
     # 1. Grid summary
     nx, ny, nz = grid_info['grid_shape']
     pd.DataFrame([{
@@ -1006,10 +870,11 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
                 })
     pd.DataFrame(samples).to_csv('voxel_sample.csv', index=False)
 
-    print("✓ Created grid_summary.csv")
-    print("✓ Created material_distribution.csv")
-    print(f"✓ Created voxel_sample.csv ({len(samples)} samples)")
-    print("\nDone! Open CSV files to inspect results.")
+    """
+    print("Created grid_summary.csv")
+    print("Created material_distribution.csv")
+    print(f"Created voxel_sample.csv ({len(samples)} samples)")
+    """
 
     # Extract HTC from parsed heatsink object
     # heatsink_obj["hc"] is in kW/m²K; convert to W/m²K
@@ -1039,13 +904,13 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
         T_ambient=45.0
     )
 
-    print("Temperature summary:")
-    print(summary)
+    #print("Temperature summary:")
+    #print(summary)
     
-    write_temperature_report(summary, "temperature_summary.txt")
+    #write_temperature_report(summary, "temperature_summary.txt")
 
-    print("Temperature summary:")
-    print(summary)
+    #print("Temperature summary:")
+    #print(summary)
 
     results = summarize_by_box_list(
         temperature_grid=temperature_grid,
