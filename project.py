@@ -626,7 +626,7 @@ def build_thermal_circuit_from_grid(
                     ambient_count += 1
                     side_bc_count += 1
                     total_exposed_faces += 1
-
+    """
     print("\n[PySpice Build Debug]")
     print(f"  Active voxels          : {active_voxel_count}")
     print(f"  Neighbor resistors X   : {rx_count}")
@@ -639,6 +639,7 @@ def build_thermal_circuit_from_grid(
     print(f"  Total ambient resistors: {ambient_count}")
     print(f"  Total exposed faces    : {total_exposed_faces}")
     print(f"  Current sources        : {source_count}")
+    """
     return circuit
 
 
