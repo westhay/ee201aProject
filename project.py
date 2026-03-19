@@ -107,7 +107,7 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
 
     for box in sorted_boxes:
         material, k_value = get_box_material(box, layers, conductivity_values)
-        print(f"[MATDBG] box={box.name} stackup='{box.stackup}' -> material='{material}', k={k_value}")
+        #print(f"[debugging k] box={box.name} stackup='{box.stackup}' -> material='{material}', k={k_value}")
 
         i_start = max(0, int((box.start_x - min_x) / voxel_size))
         i_end = min(nx, int(np.ceil((box.end_x - min_x) / voxel_size)))
@@ -141,7 +141,7 @@ def create_voxel_grid(boxes, voxel_size=0.1, layers=None, conductivity_values=No
 
         # Only the true GPU die uses center-plane power injection
         is_gpu = box.name.endswith(".GPU")
-        is_HMB = box.name.endswith(".HBM")
+        is_HBM = box.name.endswith(".HBM")
 
         if is_gpu or is_HBM:
             if k_end > k_start:
