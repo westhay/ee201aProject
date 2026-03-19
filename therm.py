@@ -1666,7 +1666,7 @@ def therm(therm_conf, heatsink_conf, bonding_conf, heatsink, out_dir, project_na
         
         is_repeat = is_repeat # False # False # True if the simulation is repeated with different powers, False if only one simulation is run.
         results = simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj = heatsink_obj, heatsink_list = heatsink_list, heatsink_name = heatsink_name, bonding_list = bonding_list, bonding_name_type_dict = bonding_name_type_dict, is_repeat = is_repeat,  min_TIM_height = min_TIM_height, power_dict = power_dict, anemoi_parameter_ID = anemoi_parameter_ID, layers = layers) #
-        #simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj = heatsink_obj, heatsink_list = heatsink_list, heatsink_name = heatsink_name, bonding_list = bonding_list, bonding_name_type_dict = bonding_name_type_dict, is_repeat = is_repeat,  min_TIM_height = min_TIM_height, power_dict = power_dict, anemoi_parameter_ID = anemoi_parameter_ID, layers = layers)
+        print(results)
         simulation_end_time = time.time()
         print("Simulation finished at ", simulation_end_time)
         print("Time taken for simulation: ", simulation_end_time - simulation_start_time)
