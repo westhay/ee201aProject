@@ -833,9 +833,9 @@ def simulator_simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj,
         print(f"Min power density:       {power_grid[nonzero_power_mask].min():.6e} W/m^3")
                            
     print("Calculating resistances...")
+    """
     resistance_grid = calculate_voxel_resistances(grid_info)
     
-    """
     # 1. Grid summary
     nx, ny, nz = grid_info['grid_shape']
     pd.DataFrame([{
